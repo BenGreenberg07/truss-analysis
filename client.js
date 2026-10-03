@@ -48,6 +48,20 @@ drawInDom = document.getElementById('drawing');
 drawingStartButton = document.getElementById('drawingStart');
 var hitButton = 0;
 
+// mouse position in drawing coordinates, works when the page is scaled to fit the window
+function svgPoint(event){
+  var rect = draw.node.getBoundingClientRect();
+  return [Number(((event.clientX - rect.left) * drawingBoardWidth / rect.width).toFixed(3)),
+          Number(((event.clientY - rect.top) * drawingBoardHeight / rect.height).toFixed(3))];
+}
+
+// scale the whole layout to fill the window width
+function fitToWindow(){
+  document.body.style.zoom = window.innerWidth / 1140;
+}
+fitToWindow();
+window.addEventListener('resize', fitToWindow);
+
 //return whether an element(in an array) is zero
 function isZero(element, index, array) {
   return element === 0;
@@ -499,8 +513,8 @@ var handlers = { //The methods here handles all direct interaction with the user
       setDependency = false;
     } else if (event.target.tagName === "line"&&event.target.id!=="movingLine"){//put a node on a line
       event.target.instance.hide();//hide the line being hit
-      jointX = event.clientX - drawInDom.offsetLeft + window.pageXOffset;
-      jointY = event.clientY - drawInDom.offsetTop + window.pageYOffset;
+      jointX = svgPoint(event)[0];
+      jointY = svgPoint(event)[1];
       jointPoints.addPoint(jointX, jointY);
       //jointPoints.points[jointPoints.points.length - 1].circle.draggable(); //Make the new added circle draggable
       hitButton++;
@@ -563,8 +577,8 @@ var handlers = { //The methods here handles all direct interaction with the user
       dependency.push(jointPoints.points.length - 1,jointPoints.points.length - 3);
       
     } else {
-      jointX = event.clientX - drawInDom.offsetLeft + window.pageXOffset;
-      jointY = event.clientY - drawInDom.offsetTop + window.pageYOffset;
+      jointX = svgPoint(event)[0];
+      jointY = svgPoint(event)[1];
       jointPoints.addPoint(jointX, jointY);
       setDependency = false;
     }
@@ -596,8 +610,8 @@ var handlers = { //The methods here handles all direct interaction with the user
         jointX = event.target.getAttribute('cx');
         jointY = event.target.getAttribute('cy');
       } else {
-        jointX = event.clientX - drawInDom.offsetLeft + window.pageXOffset;
-        jointY = event.clientY - drawInDom.offsetTop + window.pageYOffset;
+        jointX = svgPoint(event)[0];
+        jointY = svgPoint(event)[1];
       }
       var lastPoint = jointPoints.points[jointPoints.points.length - 1];
       movingLine.plot(lastPoint.xValue, lastPoint.yValue, jointX, jointY).back();
@@ -647,8 +661,8 @@ var handlers = { //The methods here handles all direct interaction with the user
         coordinatesDisplay.innerHTML = 'Coordinates:' + unitX + ", " + unitY + " (unit:"+ scaleUnit +")";
         event.target.setAttribute("stroke-opacity", "1");
       } else {
-        var svgXcoord = event.clientX - drawInDom.offsetLeft + window.pageXOffset;
-        var svgYcoord = event.clientY - drawInDom.offsetTop + window.pageYOffset;
+        var svgXcoord = svgPoint(event)[0];
+        var svgYcoord = svgPoint(event)[1];
         var trussXcoord = (svgXcoord - originXvalue).toFixed(3);
         var trussYcoord = (originYvalue - svgYcoord).toFixed(3);
         unitX = (trussXcoord/scaleRatio).toFixed(3);
