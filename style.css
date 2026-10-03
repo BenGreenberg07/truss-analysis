@@ -160,3 +160,25 @@ p{
 #fileInput{
   width:160px;
 }
+
+#cutListDiv{
+  position:absolute;
+  top:730px;
+  left:2px;
+  width:890px;
+  background-color:white;
+  padding:5px;
+  border-radius:10px;
+  margin:5px;
+  font-family:sans-serif;
+}
+
+#cutListDiv table{
+  border-collapse:collapse;
+  width:100%;
+  text-align:center;
+}
+
+.offsetInput{
+  width:55px;
+}

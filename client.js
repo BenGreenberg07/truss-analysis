@@ -1453,7 +1453,7 @@ var engine = {
       textCoords = [originXvalue + textCoords[0],originYvalue - textCoords[1]];
       if (barForce !== 0){
         this.displayNumbers.push({
-          number: draw.text(this.barForceArray[index].toString()).move(textCoords[0],textCoords[1]).font({size:15}).rotate(-angle,textCoords[0],textCoords[1])
+          number: draw.text(Number(barForce).toFixed(1) + (tOrC == "t" ? " T" : " C")).move(textCoords[0],textCoords[1]).font({size:15, weight:'bold'}).fill(barColor).rotate(-angle,textCoords[0],textCoords[1])
         });
       }
       
@@ -1469,6 +1469,8 @@ var engine = {
         });
       }
     },engine);
+    this.displayNumbers.push({number: draw.text("Blue = Tension (T)").move(drawingBoardWidth-200,10).font({size:15, weight:'bold'}).fill("blue")});
+    this.displayNumbers.push({number: draw.text("Pink = Compression (C)").move(drawingBoardWidth-200,28).font({size:15, weight:'bold'}).fill("#EA2DDF")});
     this.nodeDisplay();
     this.elementDisplay();
   },
@@ -1523,7 +1525,9 @@ var engine = {
           cellText = document.createTextNode(this.elements[i][0]+", "+this.elements[i][1]);
           cell.style.textAlign = "center";
         } else {
-          cellText = document.createTextNode(this.barForceArray[i]);
+          var f = Number(this.barForceArray[i]);
+          cellText = document.createTextNode(f === 0 ? "0" : Math.abs(f).toFixed(2) + (f > 0 ? " (T)" : " (C)"));
+          row.style.backgroundColor = f > 0 ? "#D6E4FF" : (f < 0 ? "#FBD3F8" : "white");
         }
         cell.appendChild(cellText);
         row.appendChild(cell);
@@ -1604,7 +1608,7 @@ var engine = {
       textCoords = [originXvalue + textCoords[0],originYvalue - textCoords[1]];
       if (barStress !== 0){
         this.displayNumbers.push({
-          number: draw.text(this.barStressArray[index].toString()).move(textCoords[0],textCoords[1]).font({size:15}).rotate(-angle,textCoords[0],textCoords[1])
+          number: draw.text(Number(barStress).toFixed(1) + (tOrC == "t" ? " T" : " C")).move(textCoords[0],textCoords[1]).font({size:15, weight:'bold'}).fill(barColor).rotate(-angle,textCoords[0],textCoords[1])
         });
       }
       
@@ -1620,6 +1624,8 @@ var engine = {
         });
       }
     },engine);
+    this.displayNumbers.push({number: draw.text("Blue = Tension (T)").move(drawingBoardWidth-200,10).font({size:15, weight:'bold'}).fill("blue")});
+    this.displayNumbers.push({number: draw.text("Pink = Compression (C)").move(drawingBoardWidth-200,28).font({size:15, weight:'bold'}).fill("#EA2DDF")});
     this.nodeDisplay();
     this.elementDisplay();
   },
@@ -2111,7 +2117,75 @@ var engine = {
     } 
   },
   
+  cutListTable: function(){
+    this.eraseCutListTable();
+    var div = document.createElement("div");
+    div.setAttribute("id","cutListDiv");
+    var html = "<h3>Machining Cut List</h3>" +
+      "<p>Lengths are center-to-center (unit: " + scaleUnit + "). Tension members are flat bar, compression members are square stock. " +
+      "Rough cut = length + offset, finish = length + offset (use negative numbers to subtract).</p>" +
+      "<p>Tension: rough <input type='number' step='0.01' class='offsetInput' id='tRough' value='" + cutOffsets.tRough + "'> " +
+      "finish <input type='number' step='0.01' class='offsetInput' id='tFinish' value='" + cutOffsets.tFinish + "'> " +
+      "&nbsp; Compression: rough <input type='number' step='0.01' class='offsetInput' id='cRough' value='" + cutOffsets.cRough + "'> " +
+      "finish <input type='number' step='0.01' class='offsetInput' id='cFinish' value='" + cutOffsets.cFinish + "'> " +
+      "<button onclick='engine.downloadCutList()'>Download CSV</button></p>";
+    html += "<table border='2'><thead><tr><th>Member</th><th>Nodes</th><th>From (x, y)</th><th>To (x, y)</th><th>Length c-c</th><th>T or C</th><th>Force</th><th>Rough Cut</th><th>Finish Length</th></tr></thead><tbody>";
+    this.cutListRows().forEach(function(r){
+      var color = r.tc == "T" ? "#D6E4FF" : (r.tc == "C" ? "#FBD3F8" : "white");
+      html += "<tr style='background-color:" + color + "'><td>" + r.member + "</td><td>" + r.nodes + "</td><td>" + r.from + "</td><td>" + r.to +
+        "</td><td>" + r.length + "</td><td><b>" + r.tcLabel + "</b></td><td>" + r.force + "</td><td>" + r.rough + "</td><td>" + r.finish + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    div.innerHTML = html;
+    document.getElementsByTagName("body")[0].appendChild(div);
+    ["tRough","tFinish","cRough","cFinish"].forEach(function(id){
+      document.getElementById(id).onchange = function(){
+        cutOffsets[id] = Number(this.value);
+        engine.cutListTable();
+      };
+    });
+  },
+  cutListRows: function(){
+    var rows = [];
+    this.elements.forEach(function(member,i){
+      var a = this.nodes[member[0]];
+      var b = this.nodes[member[1]];
+      var length = Math.sqrt(Math.pow(a[0]-b[0],2)+Math.pow(a[1]-b[1],2))/scaleRatio;
+      var f = Number(this.barForceArray[i]);
+      // zero-force members get cut like tension members (flat bar)
+      var tc = f > 0 ? "T" : (f < 0 ? "C" : "0");
+      var rough = length + (tc == "C" ? cutOffsets.cRough : cutOffsets.tRough);
+      var finish = length + (tc == "C" ? cutOffsets.cFinish : cutOffsets.tFinish);
+      rows.push({
+        member: i+1,
+        nodes: member[0] + ", " + member[1],
+        from: "(" + (a[0]/scaleRatio).toFixed(2) + ", " + (a[1]/scaleRatio).toFixed(2) + ")",
+        to: "(" + (b[0]/scaleRatio).toFixed(2) + ", " + (b[1]/scaleRatio).toFixed(2) + ")",
+        length: length.toFixed(2),
+        tc: tc,
+        tcLabel: tc == "T" ? "Tension" : (tc == "C" ? "Compression" : "Zero force"),
+        force: Math.abs(f).toFixed(2),
+        rough: rough.toFixed(2),
+        finish: finish.toFixed(2)
+      });
+    },engine);
+    return rows;
+  },
+  downloadCutList: function(){
+    var csv = "Member,Nodes,From,To,Length c-c (" + scaleUnit + "),T or C,Force,Rough Cut,Finish Length\n";
+    this.cutListRows().forEach(function(r){
+      csv += [r.member, '"' + r.nodes + '"', '"' + r.from + '"', '"' + r.to + '"', r.length, r.tcLabel, r.force, r.rough, r.finish].join(",") + "\n";
+    });
+    saveAs(new File([csv], "cut-list.csv", {type: "text/csv;charset=utf-8"}));
+  },
+  eraseCutListTable: function(){
+    if(document.getElementById("cutListDiv") !== null){
+      document.getElementsByTagName("body")[0].removeChild(document.getElementById("cutListDiv"));
+    }
+  },
+
   stopDisplaying: function(){
+    this.eraseCutListTable();
     this.eraseNodeDisplay();
     this.eraseNodeTable();
     this.eraseElementDisplay();
@@ -2164,6 +2238,9 @@ displaySync = {
 var nodeSyncInterval = window.setInterval(displaySync.node,500);
 var elementSyncInterval = false;
 
+// machining offsets from the lab spreadsheet (inches)
+var cutOffsets = {tRough: 1.30, tFinish: 1.25, cRough: -4.13, cFinish: -4.25};
+
 var analysisButtonHandlers = {
   node: function(){
     engine.nodeDisplay();
@@ -2180,6 +2257,7 @@ var analysisButtonHandlers = {
   force: function(){
     engine.forceDisplay();
     engine.forceTable();
+    engine.cutListTable();
     displaySync.stopNode();
     displaySync.stopElement();
   },
