@@ -375,7 +375,8 @@ td.rule-cell { width: 42%; min-width: 260px; padding-top: 4px; padding-bottom: 4
 .rule-scale span { position: absolute; top: 2px; transform: translateX(-50%); }
 .stock-totals { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 14px; font-size: 13px; }
 .stock-totals b { font-family: var(--f-mono); font-weight: 600; }
-.print-head { display: none; }
+.print-head, .print-only { display: none; }
+.tickbox { display: inline-block; width: 14px; height: 14px; border: 1px solid #000; }
 
 .credit { padding: 14px 16px 24px; font-size: 12px; color: var(--ink-3); }
 
@@ -438,6 +439,9 @@ dialog h2 { margin: 0; font: 600 16px/1 var(--f-display); }
   .topbar, .workspace, .summary, .tabs, .credit, .toast, dialog { display: none !important; }
   .results { background: #fff; }
   .tabpanel { padding: 0; overflow: visible; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tabpanel > .panel-note { display: none; }
+  th.print-only, td.print-only { display: table-cell; text-align: center; }
   .print-head { display: block; margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom: 6px; }
   .print-head h1 { margin: 0; font: 700 22px/1.1 var(--f-display); }
   .print-head p { margin: 2px 0 0; font-size: 11px; }

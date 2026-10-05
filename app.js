@@ -19,7 +19,8 @@
       snap: 0.25,
       stock: { t: '1/4 x 1 flat bar', c: '1 x 1 square' },
       offsets: { tRough: 1.30, tFinish: 1.25, cRough: -4.13, cFinish: -4.25 },
-      capacity: { t: 3000, c: 3000 },
+      // compression members with offset end tabs: capacity = offA - offB * finish length
+      capacity: { t: 3000, c: 3000, offA: 2140, offB: 6.0 },
       weight: { tPerLen: 11.5, tEnds: 0, cPerLen: 11.43, cEnds: 122.5, perJoint: 44.72 }
     };
   }
@@ -36,6 +37,8 @@
     var J = function (letter) { return letter.charCodeAt(0) - 64; };
     var mem = ['GF', 'HG', 'IH', 'AB', 'CF', 'BG', 'BC', 'CG', 'FD', 'DC', 'FE', 'DE', 'AH', 'BH'];
     mem.forEach(function (ab) { m.members.push({ id: m.nextId++, a: J(ab[0]), b: J(ab[1]) }); });
+    // offset end tabs, as on the team spreadsheet
+    [4, 7, 11, 12, 13].forEach(function (n) { m.members[n - 1].tab = 'off'; });
     m.supports[J('A')] = 'pin';
     m.supports[J('I')] = 'pin';
     m.loads[J('E')] = { fx: 0, fy: -1000 };
@@ -219,11 +222,14 @@
       var isC = tc === 'c';
       var rough = L + (isC ? st.offsets.cRough : st.offsets.tRough);
       var finish = L + (isC ? st.offsets.cFinish : st.offsets.tFinish);
-      var cap = m.cap != null ? m.cap : (isC ? st.capacity.c : st.capacity.t);
+      var off = isC && m.tab === 'off';
+      var defCap = !isC ? st.capacity.t : off ? st.capacity.offA - st.capacity.offB * finish : st.capacity.c;
+      var cap = m.cap != null ? m.cap : defCap;
       var sf = F ? cap / Math.abs(F) : Infinity;
       var weight = isC ? st.weight.cPerLen * finish + st.weight.cEnds : st.weight.tPerLen * finish + st.weight.tEnds;
       return {
-        i: i, m: m, L: L, F: F, tc: tc, rough: rough, finish: finish, cap: cap, sf: sf,
+        i: i, m: m, L: L, F: F, tc: tc, rough: rough, finish: finish, cap: cap, defCap: defCap, sf: sf,
+        tab: isC ? (off ? 'Offset' : 'Centered') : '',
         stress: F === null ? null : F / st.A, weight: weight,
         stock: isC ? st.stock.c : st.stock.t,
         excluded: !!(model.bracket[m.a] || model.bracket[m.b])
@@ -368,6 +374,15 @@
     var maxF = 0;
     if (solved) result.forces.forEach(function (f) { maxF = Math.max(maxF, Math.abs(f)); });
     var pills = [];
+    // boxes already taken by joints and placed labels, so labels can slide along their member to a clear spot
+    var taken = model.joints.map(function (j) { var s = toS(j.x, j.y); return [s[0] - 13, s[1] - 13, s[0] + 13, s[1] + 13]; });
+    function clash(b) {
+      for (var k = 0; k < taken.length; k++) {
+        var t = taken[k];
+        if (b[0] < t[2] && b[2] > t[0] && b[1] < t[3] && b[3] > t[1]) return true;
+      }
+      return false;
+    }
     model.members.forEach(function (m, i) {
       var a = jointById(m.a), b = jointById(m.b);
       var p = toS(a.x, a.y), q = toS(b.x, b.y);
@@ -392,7 +407,15 @@
         text = (i + 1) + ' · ' + (row.tc === 'z' ? '0' : fForce(Math.abs(row.F)) + ' ' + row.tc.toUpperCase());
         pc += ' ' + row.tc;
       } else text = String(i + 1);
-      var cx = (p[0] + q[0]) / 2, cy = (p[1] + q[1]) / 2, tw = text.length * 6.7 + 12;
+      var tw = text.length * 6.7 + 12, cx, cy, box;
+      var spots = [0.5, 0.38, 0.62, 0.28, 0.72, 0.5];
+      for (var si = 0; si < spots.length; si++) {
+        cx = p[0] + (q[0] - p[0]) * spots[si];
+        cy = p[1] + (q[1] - p[1]) * spots[si];
+        box = [cx - tw / 2 - 2, cy - 11, cx + tw / 2 + 2, cy + 11];
+        if (!clash(box)) break;
+      }
+      taken.push(box);
       pills.push('<g class="' + pc + '" data-m="' + m.id + '"><rect x="' + (cx - tw / 2) + '" y="' + (cy - 9) + '" width="' + tw + '" height="18" rx="2"/><text x="' + cx + '" y="' + cy + '">' + esc(text) + '</text></g>');
     });
 
@@ -491,7 +514,8 @@
     });
     $('#btnUndo').disabled = !undoStack.length;
     $('#btnRedo').disabled = !redoStack.length;
-    $('#canvasHint').textContent = ui.tool === 'member' && ui.pending ? HINTS.memberPending : HINTS[ui.tool];
+    $('#canvasHint').textContent = ui.tool === 'member' && ui.pending ? HINTS.memberPending
+      : ui.tool === 'select' && model.members.length ? '' : HINTS[ui.tool];
     $('#emptyState').hidden = model.joints.length > 0;
 
     var status = $('#canvasStatus'), msg = '', cls = 'canvas-status';
@@ -559,9 +583,14 @@
         '<dt>Rough cut</dt><dd>' + fLen(row.rough) + ' ' + u.len + '</dd>' +
         '<dt>Finish length</dt><dd>' + fLen(row.finish) + ' ' + u.len + '</dd>' +
         '<dt>Weight</dt><dd>' + num(row.weight, 1) + ' g</dd></dl></div>';
-      html += '<div class="insp-section"><h3>Capacity</h3>' +
-        field('cap', 'Max force for this member', m.cap != null ? m.cap : '', u.force, ' placeholder="' + (row.tc === 'c' ? model.settings.capacity.c : model.settings.capacity.t) + '"') +
-        '<p class="panel-note" style="margin-top:6px">Leave blank to use the default from Lab settings.</p></div>';
+      html += '<div class="insp-section"><h3>Capacity</h3>';
+      if (row.tc === 'c') {
+        html += '<div class="field" style="margin-bottom:8px">End tabs<div class="seg" role="radiogroup" aria-label="End tabs">' +
+          '<button type="button" role="radio" data-tab-type="cen" aria-checked="' + (m.tab !== 'off') + '">Centered</button>' +
+          '<button type="button" role="radio" data-tab-type="off" aria-checked="' + (m.tab === 'off') + '">Offset</button></div></div>';
+      }
+      html += field('cap', 'Max force for this member', m.cap != null ? m.cap : '', u.force, ' placeholder="' + num(row.defCap, 0).replace(/,/g, '') + '"') +
+        '<p class="panel-note" style="margin-top:6px">Leave blank to use the default from Lab settings' + (row.tc === 'c' && m.tab === 'off' ? ' (offset tabs: ' + num(row.defCap, 0) + ' ' + u.force + ' at this length)' : '') + '.</p></div>';
       html += '<div class="insp-actions"><button type="button" class="btn danger small" data-action="delete">Delete member</button></div>';
     } else {
       ui.sel = null;
@@ -633,7 +662,7 @@
     if (!model.members.length) return '<p class="panel-note">Member forces show up here once you draw members.</p>';
     var h = solved ? '<p class="panel-note">Positive is tension (pulling on the joints), negative is compression. Safety factor is capacity divided by the force. Members at a mounting bracket are greyed out of the overall safety factor.</p>'
       : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + '</p>';
-    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length (' + u.len + ')</th><th>Force (' + u.force + ')</th><th>T / C</th><th>Stress (' + u.stress + ')</th><th>Capacity (' + u.force + ')</th><th>Safety factor</th></tr></thead><tbody>';
+    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length (' + u.len + ')</th><th>Force (' + u.force + ')</th><th>T / C</th><th class="left">Tabs</th><th>Stress (' + u.stress + ')</th><th>Capacity (' + u.force + ')</th><th>Safety factor</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
       var sfCls = '';
       if (solved && isFinite(r.sf)) {
@@ -644,7 +673,7 @@
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td>' +
         '<td class="num">' + fLen(r.L) + '</td>' +
         '<td class="num">' + (solved ? fForceExact(r.F) : '–') + '</td>' +
-        '<td>' + tcTag(r) + '</td>' +
+        '<td>' + tcTag(r) + '</td><td class="left">' + (r.tab || '–') + '</td>' +
         '<td class="num">' + (solved ? num(r.stress, 0) : '–') + '</td>' +
         '<td class="num">' + num(r.cap, 0) + (r.m.cap != null ? '*' : '') + '</td>' +
         '<td class="num ' + sfCls + '">' + (solved && isFinite(r.sf) ? num(r.sf, 2) : '–') + '</td></tr>';
@@ -689,15 +718,15 @@
     for (var t = 0; t <= span + 1e-9; t += labelStep) scale += '<span style="left:' + (t / span * 100) + '%">' + t + '</span>';
     scale += '</div>';
 
-    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th><th class="left">Stock</th><th>Length c-c</th><th>Rough cut</th><th>Finish</th><th>Weight (g)</th><th class="left rule-cell">' + scale + '</th></tr></thead><tbody>';
+    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th><th class="left">Stock</th><th class="left">Tabs</th><th>Length c-c</th><th>Rough cut</th><th>Finish</th><th>Weight (g)</th><th class="left rule-cell">' + scale + '</th><th class="print-only">Done</th></tr></thead><tbody>';
     var totals = {};
     data.rows.forEach(function (r) {
       var key = r.tc === 'c' ? 'c' : 't';
       totals[key] = totals[key] || { n: 0, rough: 0, name: r.stock };
       totals[key].n++; totals[key].rough += r.rough;
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td><td>' + tcTag(r) + '</td>' +
-        '<td class="left">' + esc(r.stock) + '</td><td class="num">' + fLen(r.L) + '</td><td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td>' +
-        '<td class="num">' + num(r.weight, 1) + '</td><td class="rule-cell">' + ruleSvg(r, span, minorStep, majorStep) + '</td></tr>';
+        '<td class="left">' + esc(r.stock) + '</td><td class="left">' + (r.tab || '–') + '</td><td class="num">' + fLen(r.L) + '</td><td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td>' +
+        '<td class="num">' + num(r.weight, 1) + '</td><td class="rule-cell">' + ruleSvg(r, span, minorStep, majorStep) + '</td><td class="print-only"><span class="tickbox"></span></td></tr>';
     });
     h += '</tbody></table><div class="stock-totals">';
     ['t', 'c'].forEach(function (k) {
@@ -967,6 +996,11 @@
       checkpoint();
       if (b.dataset.support === 'none') delete model.supports[ui.sel.id]; else model.supports[ui.sel.id] = b.dataset.support;
       refresh();
+    } else if (b.dataset.tabType && ui.sel && ui.sel.type === 'member') {
+      checkpoint();
+      var mt = model.members[memberIndex(ui.sel.id)];
+      if (b.dataset.tabType === 'off') mt.tab = 'off'; else delete mt.tab;
+      refresh();
     } else if (b.dataset.action === 'delete') deleteSelection();
     else if (b.dataset.action === 'add-joint') addJointFromForm();
   });
@@ -999,6 +1033,15 @@
   });
   document.querySelectorAll('[role="tab"]').forEach(function (t) {
     t.addEventListener('click', function () { ui.tab = t.dataset.tab; refresh(); });
+  });
+  $('.tabs').addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+    var i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    var next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    next.focus();
+    next.click();
   });
 
   // ---------- toolbar and chrome events ----------
@@ -1081,12 +1124,12 @@
   }
   $('#btnCsv').addEventListener('click', function () {
     var data = analyze.cache, u = U(), solved = result.status === 'ok';
-    var head = ['Member', 'From', 'To', 'Length c-c (' + u.len + ')', 'Force (' + u.force + ')', 'T or C', 'Stress (' + u.stress + ')', 'Capacity (' + u.force + ')', 'Safety factor', 'Stock', 'Rough cut (' + u.len + ')', 'Finish length (' + u.len + ')', 'Weight (g)'];
+    var head = ['Member', 'From', 'To', 'Length c-c (' + u.len + ')', 'Force (' + u.force + ')', 'T or C', 'Tabs', 'Stress (' + u.stress + ')', 'Capacity (' + u.force + ')', 'Safety factor', 'Stock', 'Rough cut (' + u.len + ')', 'Finish length (' + u.len + ')', 'Weight (g)'];
     var lines = [head.join(',')];
     data.rows.forEach(function (r) {
       lines.push([
         r.i + 1, labelOf(r.m.a), labelOf(r.m.b), r.L.toFixed(3),
-        solved ? r.F.toFixed(2) : '', solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '',
+        solved ? r.F.toFixed(2) : '', solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '', r.tab,
         solved ? r.stress.toFixed(1) : '', r.cap, solved && isFinite(r.sf) ? r.sf.toFixed(2) : '',
         r.stock, r.rough.toFixed(3), r.finish.toFixed(3), r.weight.toFixed(1)
       ].map(csvCell).join(','));
@@ -1126,7 +1169,9 @@
       sText('stock.c', 'Compression stock') + sField('offsets.cRough', 'Compression rough cut', u.len) + sField('offsets.cFinish', 'Compression finish', u.len) +
       '</div></fieldset>';
     h += '<fieldset><legend>Capacity</legend><p class="hint">Safety factor = capacity / member force. You can override the capacity of one member from the side panel.</p><div class="settings-grid">' +
-      sField('capacity.t', 'Max tension force', u.force) + sField('capacity.c', 'Max compression force', u.force) + '</div></fieldset>';
+      sField('capacity.t', 'Max tension force', u.force) + sField('capacity.c', 'Max compression, centered tabs', u.force) +
+      sField('capacity.offA', 'Offset tabs: base force', u.force) + sField('capacity.offB', 'Offset tabs: minus per length', u.force + '/' + u.len) + '</div>' +
+      '<p class="hint">Offset-tab capacity = base force - (minus per length x finish length). The defaults reproduce the spreadsheet: 2140 - 6.0 x finish.</p></fieldset>';
     h += '<fieldset><legend>Weight</legend><p class="hint">Member weight = mass per length x finish length + end fittings. Defaults are fitted to the team spreadsheet.</p><div class="settings-grid">' +
       sField('weight.tPerLen', 'Tension stock', u.perLen) + sField('weight.tEnds', 'Tension ends, per member', 'g') +
       sField('weight.cPerLen', 'Compression stock', u.perLen) + sField('weight.cEnds', 'Compression ends, per member', 'g') +
@@ -1184,6 +1229,7 @@
     st.E = r(st.E * kE, 2); st.A = r(st.A * kA, 4);
     Object.keys(st.offsets).forEach(function (k) { st.offsets[k] = r(st.offsets[k] * kL, 3); });
     st.capacity.t = r(st.capacity.t * kF, 1); st.capacity.c = r(st.capacity.c * kF, 1);
+    st.capacity.offA = r(st.capacity.offA * kF, 1); st.capacity.offB = r(st.capacity.offB * kF / kL, 4);
     st.weight.tPerLen = r(st.weight.tPerLen / kL, 4); st.weight.cPerLen = r(st.weight.cPerLen / kL, 4);
     st.snap = toMetric ? 5 : 0.25;
     st.units = to;
