@@ -4,6 +4,8 @@ A 2D truss calculator for the engineering mechanics truss lab. Draw the truss (o
 
 Open `index.html` in a browser. No install or build step.
 
+The switch in the top bar picks how much to show. **Simple** shows only what you need to machine the pieces: member lengths, tension or compression, and rough cut and finish lengths. **Detailed** adds safety factors, end tabs, weight, reactions, displacements and the drawn-to-scale cut list.
+
 ## What it does
 
 - Draw joints and members on a grid, or enter exact coordinates.

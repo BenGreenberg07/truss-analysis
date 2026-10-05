@@ -18,6 +18,10 @@
       <span class="visually-hidden">Project name</span>
       <input id="projectName" type="text" spellcheck="false" autocomplete="off">
     </label>
+    <div class="seg mode-switch" role="radiogroup" aria-label="How much to show">
+      <button type="button" role="radio" data-mode="simple" title="Lengths, tension or compression, and cut lengths">Simple</button>
+      <button type="button" role="radio" data-mode="full" title="Adds safety factors, end tabs, weight, reactions and displacements">Detailed</button>
+    </div>
     <nav class="file-actions" aria-label="File">
       <button type="button" class="btn ghost" id="btnNew">New</button>
       <button type="button" class="btn ghost" id="btnExample">Load example</button>
@@ -94,6 +98,7 @@
   <section class="results" aria-label="Results">
     <div class="summary" id="summary"></div>
     <div class="tabs" role="tablist">
+      <h2 class="simple-title">Members and cut lengths</h2>
       <button type="button" role="tab" data-tab="forces" id="tab-forces">Member forces</button>
       <button type="button" role="tab" data-tab="cut" id="tab-cut">Cut list</button>
       <button type="button" role="tab" data-tab="joints" id="tab-joints">Joints and reactions</button>

@@ -311,6 +311,12 @@ button, input, select { font: inherit; color: inherit; }
 .check-list li { color: var(--ink-2); }
 .check-list li.bad { color: var(--danger); }
 
+/* ---------- simple / detailed ---------- */
+.mode-switch button { padding: 5px 12px; font-size: 13px; }
+.simple-title { display: none; margin: 0; padding: 12px 0 10px; font: 600 14px/1 var(--f-display); }
+.mode-simple .simple-title { display: block; }
+.mode-simple .tabs [role="tab"], .mode-simple .summary { display: none; }
+
 /* ---------- results ---------- */
 .results { background: var(--sheet); }
 .summary { display: flex; flex-wrap: wrap; gap: 4px 22px; padding: 10px 16px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); }

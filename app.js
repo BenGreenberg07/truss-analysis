@@ -50,7 +50,8 @@
   var model = emptyModel();
   var result = null;
   var undoStack = [], redoStack = [];
-  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', cursor: null, focusLoad: false };
+  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', mode: 'simple', cursor: null, focusLoad: false };
+  function simple() { return ui.mode === 'simple'; }
   var view = { x: 12, y: 6, s: 30 };
   var drag = null;
   var spaceDown = false;
@@ -122,7 +123,7 @@
   }
   function persist() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ model: model, ui: { tab: ui.tab, labels: ui.labels } }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ model: model, ui: { tab: ui.tab, labels: ui.labels, mode: ui.mode } }));
     } catch (e) { /* storage unavailable: the app still works, it just won't remember */ }
   }
   function normalize(m) {
@@ -149,6 +150,7 @@
       if (data.ui) {
         if (data.ui.tab) ui.tab = data.ui.tab;
         if (data.ui.labels) ui.labels = data.ui.labels;
+        if (data.ui.mode) ui.mode = data.ui.mode;
       }
     } catch (e) { /* ignore a corrupt or blocked store */ }
   }
@@ -506,6 +508,10 @@
     load: 'Click a joint, then type its load in the side panel. Negative Fy points down.'
   };
   function renderChrome(data) {
+    document.body.classList.toggle('mode-simple', simple());
+    document.querySelectorAll('[data-mode]').forEach(function (b) {
+      b.setAttribute('aria-checked', String(b.dataset.mode === ui.mode));
+    });
     document.querySelectorAll('.tool[data-tool]').forEach(function (b) {
       b.setAttribute('aria-pressed', String(b.dataset.tool === ui.tool));
     });
@@ -558,8 +564,8 @@
       html += '</div></div>';
       html += '<div class="insp-section"><h3>Load</h3><div class="field-row">' +
         field('fx', 'Fx', ld.fx || 0, u.force) + field('fy', 'Fy', ld.fy || 0, u.force) + '</div>' +
-        '<label class="check"><input type="checkbox" id="bracket"' + (model.bracket[j.id] ? ' checked' : '') + '> Mounting bracket: leave the members attached here out of the overall safety factor</label></div>';
-      if (solved) {
+        (simple() ? '</div>' : '<label class="check"><input type="checkbox" id="bracket"' + (model.bracket[j.id] ? ' checked' : '') + '> Mounting bracket: leave the members attached here out of the overall safety factor</label></div>');
+      if (solved && !simple()) {
         var d = result.u[j.id], r = result.reactions[j.id];
         html += '<div class="insp-section"><h3>Results</h3><dl class="readout">' +
           '<dt>Displacement x</dt><dd>' + num(d.x, 4) + ' ' + u.len + '</dd>' +
@@ -575,21 +581,21 @@
       html += '<div class="insp-section"><dl class="readout">' +
         '<dt>Length c-c</dt><dd>' + fLen(row.L) + ' ' + u.len + '</dd>' +
         (solved ? '<dt>Force</dt><dd>' + (row.tc === 'z' ? '0' : fForceExact(Math.abs(row.F)) + ' ' + u.force + ' ' + (row.tc === 't' ? 'tension' : 'compression')) + '</dd>' +
-          '<dt>Stress</dt><dd>' + num(Math.abs(row.stress), 0) + ' ' + u.stress + '</dd>' +
-          '<dt>Safety factor</dt><dd>' + (isFinite(row.sf) ? num(row.sf, 2) : '–') + '</dd>' : '') +
+          (simple() ? '' : '<dt>Stress</dt><dd>' + num(Math.abs(row.stress), 0) + ' ' + u.stress + '</dd>' +
+          '<dt>Safety factor</dt><dd>' + (isFinite(row.sf) ? num(row.sf, 2) : '–') + '</dd>') : '') +
         '</dl></div>';
       html += '<div class="insp-section"><h3>Machining</h3><dl class="readout">' +
         '<dt>Stock</dt><dd>' + esc(row.stock) + '</dd>' +
         '<dt>Rough cut</dt><dd>' + fLen(row.rough) + ' ' + u.len + '</dd>' +
         '<dt>Finish length</dt><dd>' + fLen(row.finish) + ' ' + u.len + '</dd>' +
-        '<dt>Weight</dt><dd>' + num(row.weight, 1) + ' g</dd></dl></div>';
-      html += '<div class="insp-section"><h3>Capacity</h3>';
-      if (row.tc === 'c') {
+        (simple() ? '' : '<dt>Weight</dt><dd>' + num(row.weight, 1) + ' g</dd>') + '</dl></div>';
+      if (!simple()) html += '<div class="insp-section"><h3>Capacity</h3>';
+      if (!simple() && row.tc === 'c') {
         html += '<div class="field" style="margin-bottom:8px">End tabs<div class="seg" role="radiogroup" aria-label="End tabs">' +
           '<button type="button" role="radio" data-tab-type="cen" aria-checked="' + (m.tab !== 'off') + '">Centered</button>' +
           '<button type="button" role="radio" data-tab-type="off" aria-checked="' + (m.tab === 'off') + '">Offset</button></div></div>';
       }
-      html += field('cap', 'Max force for this member', m.cap != null ? m.cap : '', u.force, ' placeholder="' + num(row.defCap, 0).replace(/,/g, '') + '"') +
+      if (!simple()) html += field('cap', 'Max force for this member', m.cap != null ? m.cap : '', u.force, ' placeholder="' + num(row.defCap, 0).replace(/,/g, '') + '"') +
         '<p class="panel-note" style="margin-top:6px">Leave blank to use the default from Lab settings' + (row.tc === 'c' && m.tab === 'off' ? ' (offset tabs: ' + num(row.defCap, 0) + ' ' + u.force + ' at this length)' : '') + '.</p></div>';
       html += '<div class="insp-actions"><button type="button" class="btn danger small" data-action="delete">Delete member</button></div>';
     } else {
@@ -599,7 +605,7 @@
         '<button type="button" class="btn small" data-action="add-joint">Add</button></div>' +
         '<p class="panel-note" style="margin-top:6px">With the Member tool active, each new joint connects to the previous one.</p></div>';
       html += '<div class="insp-section"><h3>Checks</h3><ul class="check-list">' + checks(data) + '</ul></div>';
-      html += '<div class="insp-section"><h3>Keys</h3><ul class="shortcuts">' +
+      if (!simple()) html += '<div class="insp-section"><h3>Keys</h3><ul class="shortcuts">' +
         '<li><kbd>V</kbd><kbd>J</kbd><kbd>M</kbd><kbd>S</kbd><kbd>L</kbd> switch tools</li>' +
         '<li><kbd>Del</kbd> delete the selection</li>' +
         '<li><kbd>Esc</kbd> stop drawing or deselect</li>' +
@@ -753,7 +759,30 @@
     return h + '</tbody></table>';
   }
 
+  function renderSimple(data) {
+    var u = U(), st = model.settings, solved = result.status === 'ok';
+    if (!model.members.length) return '<p class="panel-note">Member lengths and cut lengths show up here once you draw members.</p>';
+    var h = '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
+      '. Lengths in ' + u.len + '. Tension: rough = c-c ' + sign(st.offsets.tRough) + ', finish = c-c ' + sign(st.offsets.tFinish) +
+      '. Compression: rough = c-c ' + sign(st.offsets.cRough) + ', finish = c-c ' + sign(st.offsets.cFinish) + '.</p></div>';
+    h += solved ? '<p class="panel-note">Rough cut and finish length = center-to-center length plus the offset for tension or compression stock (set in Lab settings).</p>'
+      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + ' Until it solves, every piece is listed with the tension offsets.</p>';
+    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length c-c (' + u.len + ')</th><th>Force (' + u.force + ')</th><th class="left">T or C</th><th>Rough cut (' + u.len + ')</th><th>Finish length (' + u.len + ')</th><th class="print-only">Done</th></tr></thead><tbody>';
+    data.rows.forEach(function (r) {
+      var tcText = !r.tc ? '–' : r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero force';
+      h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td>' +
+        '<td class="num">' + fLen(r.L) + '</td><td class="num">' + (solved ? fForceExact(Math.abs(r.F)) : '–') + '</td>' +
+        '<td class="left">' + (r.tc ? tcTag(r) + ' ' + tcText : '–') + '</td>' +
+        '<td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td><td class="print-only"><span class="tickbox"></span></td></tr>';
+    });
+    return h + '</tbody></table>';
+  }
+
   function renderResults(data) {
+    if (simple()) {
+      $('#panel').innerHTML = renderSimple(data);
+      return;
+    }
     renderSummary(data);
     document.querySelectorAll('[role="tab"]').forEach(function (t) {
       t.setAttribute('aria-selected', String(t.dataset.tab === ui.tab));
@@ -1051,6 +1080,9 @@
   document.querySelectorAll('[data-labels]').forEach(function (b) {
     b.addEventListener('click', function () { ui.labels = b.dataset.labels; refresh(); });
   });
+  document.querySelectorAll('[data-mode]').forEach(function (b) {
+    b.addEventListener('click', function () { ui.mode = b.dataset.mode; refresh(); });
+  });
   $('#btnUndo').addEventListener('click', undo);
   $('#btnRedo').addEventListener('click', redo);
   $('#zoomIn').addEventListener('click', function () { var z = size(); zoomAt(z.w / 2, z.h / 2, 1.25); });
@@ -1124,6 +1156,16 @@
   }
   $('#btnCsv').addEventListener('click', function () {
     var data = analyze.cache, u = U(), solved = result.status === 'ok';
+    if (simple()) {
+      var rowsS = ['Member,From,To,Length c-c (' + u.len + '),Force (' + u.force + '),T or C,Rough cut (' + u.len + '),Finish length (' + u.len + ')'];
+      data.rows.forEach(function (r) {
+        rowsS.push([r.i + 1, labelOf(r.m.a), labelOf(r.m.b), r.L.toFixed(3), solved ? Math.abs(r.F).toFixed(2) : '',
+          solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '', r.rough.toFixed(3), r.finish.toFixed(3)].map(csvCell).join(','));
+      });
+      download(slug() + '-cut-list.csv', rowsS.join('\n') + '\n', 'text/csv');
+      toast('Downloaded ' + slug() + '-cut-list.csv');
+      return;
+    }
     var head = ['Member', 'From', 'To', 'Length c-c (' + u.len + ')', 'Force (' + u.force + ')', 'T or C', 'Tabs', 'Stress (' + u.stress + ')', 'Capacity (' + u.force + ')', 'Safety factor', 'Stock', 'Rough cut (' + u.len + ')', 'Finish length (' + u.len + ')', 'Weight (g)'];
     var lines = [head.join(',')];
     data.rows.forEach(function (r) {
@@ -1159,20 +1201,20 @@
     var u = U(), st = model.settings;
     var snaps = st.units === 'metric' ? [1, 2, 5, 10, 25] : [0.05, 0.1, 0.125, 0.25, 0.5, 1];
     var theme = currentTheme();
-    var h = '<fieldset><legend>Units and material</legend><div class="settings-grid">' +
+    var h = '<fieldset><legend>' + (simple() ? 'Units' : 'Units and material') + '</legend><div class="settings-grid">' +
       '<label class="field">Units<select data-special="units"><option value="imperial"' + (st.units === 'imperial' ? ' selected' : '') + '>in, lbf</option><option value="metric"' + (st.units === 'metric' ? ' selected' : '') + '>mm, N</option></select></label>' +
-      sField('E', 'Elastic modulus E', u.E) + sField('A', 'Cross-section area A', u.A) +
+      (simple() ? '' : sField('E', 'Elastic modulus E', u.E) + sField('A', 'Cross-section area A', u.A)) +
       '<label class="field">Grid snap<select data-special="snap">' + snaps.map(function (s) { return '<option value="' + s + '"' + (Math.abs(s - st.snap) < 1e-9 ? ' selected' : '') + '>' + s + ' ' + u.len + '</option>'; }).join('') + '</select></label>' +
-      '</div><p class="hint">E and A only change displacements, unless the truss is statically indeterminate.</p></fieldset>';
+      '</div>' + (simple() ? '' : '<p class="hint">E and A only change displacements, unless the truss is statically indeterminate.</p>') + '</fieldset>';
     h += '<fieldset><legend>Machining offsets</legend><p class="hint">Rough cut and finish length = center-to-center length + offset. Use a negative number to subtract. Defaults come from the team spreadsheet.</p><div class="settings-grid">' +
       sText('stock.t', 'Tension stock') + sField('offsets.tRough', 'Tension rough cut', u.len) + sField('offsets.tFinish', 'Tension finish', u.len) +
       sText('stock.c', 'Compression stock') + sField('offsets.cRough', 'Compression rough cut', u.len) + sField('offsets.cFinish', 'Compression finish', u.len) +
       '</div></fieldset>';
-    h += '<fieldset><legend>Capacity</legend><p class="hint">Safety factor = capacity / member force. You can override the capacity of one member from the side panel.</p><div class="settings-grid">' +
+    if (!simple()) h += '<fieldset><legend>Capacity</legend><p class="hint">Safety factor = capacity / member force. You can override the capacity of one member from the side panel.</p><div class="settings-grid">' +
       sField('capacity.t', 'Max tension force', u.force) + sField('capacity.c', 'Max compression, centered tabs', u.force) +
       sField('capacity.offA', 'Offset tabs: base force', u.force) + sField('capacity.offB', 'Offset tabs: minus per length', u.force + '/' + u.len) + '</div>' +
       '<p class="hint">Offset-tab capacity = base force - (minus per length x finish length). The defaults reproduce the spreadsheet: 2140 - 6.0 x finish.</p></fieldset>';
-    h += '<fieldset><legend>Weight</legend><p class="hint">Member weight = mass per length x finish length + end fittings. Defaults are fitted to the team spreadsheet.</p><div class="settings-grid">' +
+    if (!simple()) h += '<fieldset><legend>Weight</legend><p class="hint">Member weight = mass per length x finish length + end fittings. Defaults are fitted to the team spreadsheet.</p><div class="settings-grid">' +
       sField('weight.tPerLen', 'Tension stock', u.perLen) + sField('weight.tEnds', 'Tension ends, per member', 'g') +
       sField('weight.cPerLen', 'Compression stock', u.perLen) + sField('weight.cEnds', 'Compression ends, per member', 'g') +
       sField('weight.perJoint', 'Pin hardware, per joint', 'g') + '</div></fieldset>';
