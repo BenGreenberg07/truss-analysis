@@ -10,18 +10,29 @@
     metric: { len: 'mm', force: 'N', stress: 'MPa', E: 'MPa', A: 'mm²', perLen: 'g/mm' }
   };
 
-  // Defaults come from the team's machining spreadsheet (inches, lbf, grams).
+  // Stock catalog from the E6 Lab 3 design sheet (inches, lbf, grams).
+  // rough/finish: offset added to the center-to-center length.
+  // weight = perIn * finish + ends. Capacity: cap (centered tabs); offset tabs = offA - offB * finish.
+  var STOCK_IDS = ['flat14', 'flat18', 'tube1', 'tube34'];
+  function defaultStocks() {
+    return {
+      flat14: { name: '1/4 x 1 flat bar', kind: 't', rough: 1.30, finish: 1.25, perIn: 11.5, ends: 0, cap: 3000 },
+      flat18: { name: '1/8 x 1 flat bar', kind: 't', rough: 1.30, finish: 1.25, perIn: 5.75, ends: 0, cap: 1500 },
+      tube1: { name: '1 x 1 tube', kind: 'c', rough: -4.13, finish: -4.25, perIn: 11.41, ends: 122.6, cap: 3000, offA: 2140, offB: 6 },
+      tube34: { name: '3/4 x 3/4 tube', kind: 'c', rough: -3.63, finish: -3.75, perIn: 7.64, ends: 72, cap: 2200, offA: 1470, offB: 14 }
+    };
+  }
   function defaultSettings() {
     return {
       units: 'imperial',
       E: 1e7,
       A: 0.25,
       snap: 0.25,
-      stock: { t: '1/4 x 1 flat bar', c: '1 x 1 square' },
-      offsets: { tRough: 1.30, tFinish: 1.25, cRough: -4.13, cFinish: -4.25 },
-      // compression members with offset end tabs: capacity = offA - offB * finish length
-      capacity: { t: 3000, c: 3000, offA: 2140, offB: 6.0 },
-      weight: { tPerLen: 11.5, tEnds: 0, cPerLen: 11.43, cEnds: 122.5, perJoint: 44.72 }
+      stocks: defaultStocks(),
+      defaultStock: { t: 'flat14', c: 'tube1' },
+      // pin hardware = (joints - 2) * perJoint; the two support joints use the test fixture's pins
+      pin: { perJoint: 57.5, skip: 2 },
+      rules: true
     };
   }
 
@@ -42,7 +53,6 @@
     m.supports[J('A')] = 'pin';
     m.supports[J('I')] = 'pin';
     m.loads[J('E')] = { fx: 0, fy: -1000 };
-    m.bracket[J('A')] = true;
     return m;
   }
 
@@ -129,9 +139,23 @@
   function normalize(m) {
     var out = Object.assign(emptyModel(), m);
     out.settings = Object.assign(defaultSettings(), m.settings || {});
-    ['stock', 'offsets', 'capacity', 'weight'].forEach(function (k) {
-      out.settings[k] = Object.assign(defaultSettings()[k], (m.settings || {})[k] || {});
-    });
+    var ms = m.settings || {}, ds = defaultStocks();
+    out.settings.stocks = {};
+    STOCK_IDS.forEach(function (id) { out.settings.stocks[id] = Object.assign(ds[id], (ms.stocks || {})[id] || {}); });
+    out.settings.defaultStock = Object.assign({ t: 'flat14', c: 'tube1' }, ms.defaultStock || {});
+    out.settings.pin = Object.assign({ perJoint: 57.5, skip: 2 }, ms.pin || {});
+    // files saved before the stock catalog: carry over edited offsets and capacities
+    if (ms.offsets) {
+      Object.assign(out.settings.stocks.flat14, { rough: ms.offsets.tRough, finish: ms.offsets.tFinish });
+      Object.assign(out.settings.stocks.tube1, { rough: ms.offsets.cRough, finish: ms.offsets.cFinish });
+    }
+    if (ms.capacity) {
+      Object.assign(out.settings.stocks.flat14, { cap: ms.capacity.t });
+      Object.assign(out.settings.stocks.tube1, { cap: ms.capacity.c, offA: ms.capacity.offA || 2140, offB: ms.capacity.offB || 6 });
+    }
+    ['stock', 'offsets', 'capacity', 'weight'].forEach(function (k) { delete out.settings[k]; });
+    out.settings.units = 'imperial';
+    out.members.forEach(function (mb) { if (mb.stock && !out.settings.stocks[mb.stock]) delete mb.stock; });
     out.supports = out.supports || {};
     out.loads = out.loads || {};
     out.bracket = out.bracket || {};
@@ -222,19 +246,24 @@
       var F = ok ? result.forces[i] : null;
       var tc = F === null ? null : F > 0 ? 't' : F < 0 ? 'c' : 'z';
       var isC = tc === 'c';
-      var rough = L + (isC ? st.offsets.cRough : st.offsets.tRough);
-      var finish = L + (isC ? st.offsets.cFinish : st.offsets.tFinish);
-      var off = isC && m.tab === 'off';
-      var defCap = !isC ? st.capacity.t : off ? st.capacity.offA - st.capacity.offB * finish : st.capacity.c;
+      var stockId = m.stock || st.defaultStock[isC ? 'c' : 't'];
+      var sk = st.stocks[stockId];
+      var tube = sk.kind === 'c';
+      var rough = L + sk.rough;
+      var finish = L + sk.finish;
+      var off = tube && m.tab === 'off';
+      var defCap = off ? sk.offA - sk.offB * finish : sk.cap;
       var cap = m.cap != null ? m.cap : defCap;
       var sf = F ? cap / Math.abs(F) : Infinity;
-      var weight = isC ? st.weight.cPerLen * finish + st.weight.cEnds : st.weight.tPerLen * finish + st.weight.tEnds;
+      var weight = sk.perIn * finish + sk.ends;
       return {
         i: i, m: m, L: L, F: F, tc: tc, rough: rough, finish: finish, cap: cap, defCap: defCap, sf: sf,
-        tab: isC ? (off ? 'Offset' : 'Centered') : '',
+        tab: tube ? (off ? 'Offset' : 'Centered') : '',
         stress: F === null ? null : F / st.A, weight: weight,
-        stock: isC ? st.stock.c : st.stock.t,
-        excluded: !!(model.bracket[m.a] || model.bracket[m.b])
+        stockId: stockId, stock: sk.name, stockKind: sk.kind, manualStock: !!m.stock,
+        // flat bar can't take compression, and a tube in tension is wasted weight
+        mismatch: (tc === 'c' && sk.kind === 't') || (tc === 't' && sk.kind === 'c'),
+        excluded: isBracket(m.a) || isBracket(m.b)
       };
     });
     var s = { rows: rows, maxT: null, maxC: null, minSF: null, weight: 0, defl: null };
@@ -245,7 +274,7 @@
       if (r.tc === 'c' && (!s.maxC || r.F < s.maxC.F)) s.maxC = r;
       if (r.F && !r.excluded && (!s.minSF || r.sf < s.minSF.sf)) s.minSF = r;
     });
-    s.weight += st.weight.perJoint * model.joints.length;
+    s.weight += st.pin.perJoint * Math.max(0, model.joints.length - st.pin.skip);
     if (ok) {
       var best = null, bestMag = 0;
       model.joints.forEach(function (j) {
@@ -261,7 +290,73 @@
       }
     }
     s.determinacy = model.members.length + result.counts.r - 2 * model.joints.length;
+    // lab score: 60 / (weight in lb x deflection in in) + 30 x safety factor
+    if (s.defl && s.minSF && Math.abs(s.defl.value) > 1e-9) {
+      s.score = 60 / ((s.weight / 453.592) * Math.abs(s.defl.value)) + 30 * s.minSF.sf;
+    }
+    s.rules = st.rules ? ruleChecks(rows, ok) : [];
     return s;
+  }
+
+  // The lab's mounting bracket is the joint at (0, 0); members there are left out of the overall safety factor.
+  function isBracket(id) {
+    var j = jointById(id);
+    return !!model.bracket[id] || (j && Math.abs(j.x) < 1e-6 && Math.abs(j.y) < 1e-6);
+  }
+
+  // E6 Lab 3 design rules (inches).
+  function ruleChecks(rows, ok) {
+    var out = [], joints = model.joints;
+    function add(pass, text) { out.push({ ok: pass, text: text }); }
+    if (!joints.length) return out;
+    var near = function (j, x, y) { return Math.abs(j.x - x) < 1e-6 && Math.abs(j.y - y) < 1e-6; };
+    var lower = joints.filter(function (j) { return near(j, 0, 0); })[0];
+    var upper = joints.filter(function (j) { return near(j, 0, 12); })[0];
+    add(!!(lower && upper && model.supports[lower.id] && model.supports[upper.id]),
+      'Supports at (0, 0) and (0, 12)');
+    if (lower && upper) add(!hasMember(lower.id, upper.id), 'No member between the supports');
+
+    var bad = rows.filter(function (r) { return r.L < 2 - 1e-9 || r.L > 15.3 + 1e-9; });
+    add(!bad.length, 'Member lengths 2 to 15.3 in' + (bad.length ? ': member ' + bad.map(function (r) { return r.i + 1; }).join(', ') : ''));
+
+    var lowJ = joints.filter(function (j) { return j.y < -1 - 1e-9; });
+    add(!lowJ.length, 'Nothing more than 1 in below the bottom support' + (lowJ.length ? ': joint ' + lowJ.map(function (j) { return labelOf(j.id); }).join(', ') : ''));
+
+    var crowded = [], compCrowded = [], tight = [];
+    joints.forEach(function (j) {
+      var at = rows.filter(function (r) { return r.m.a === j.id || r.m.b === j.id; });
+      if (at.length > 5) crowded.push(labelOf(j.id));
+      if (ok && at.filter(function (r) { return r.tc === 'c'; }).length > 3) compCrowded.push(labelOf(j.id));
+      var ang = at.map(function (r) {
+        var o = jointById(r.m.a === j.id ? r.m.b : r.m.a);
+        return Math.atan2(o.y - j.y, o.x - j.x) * 180 / Math.PI;
+      }).sort(function (a, b) { return a - b; });
+      for (var k = 0; k < ang.length && ang.length > 1; k++) {
+        var gap = k === ang.length - 1 ? ang[0] + 360 - ang[k] : ang[k + 1] - ang[k];
+        if (gap < 30 - 1e-6) { tight.push(labelOf(j.id)); break; }
+      }
+    });
+    add(!crowded.length, 'At most 5 members at a joint' + (crowded.length ? ': joint ' + crowded.join(', ') : ''));
+    if (ok) add(!compCrowded.length, 'At most 3 compression members at a joint' + (compCrowded.length ? ': joint ' + compCrowded.join(', ') : ''));
+    add(!tight.length, 'At least 30° between members at a joint' + (tight.length ? ': joint ' + tight.join(', ') : ''));
+
+    var loaded = joints.filter(function (j) { var l = model.loads[j.id]; return l && (l.fx || l.fy); });
+    if (loaded.length) {
+      var lj = loaded[0], maxY = Math.max.apply(null, joints.map(function (j) { return j.y; }));
+      add(near(lj, 30, 18), 'Load at (30, 18)');
+      add(lj.y >= maxY - 1e-9, 'Load point is the highest point');
+      var rightAngle = false, at2 = rows.filter(function (r) { return r.m.a === lj.id || r.m.b === lj.id; });
+      for (var p = 0; p < at2.length; p++) for (var q = p + 1; q < at2.length; q++) {
+        var o1 = jointById(at2[p].m.a === lj.id ? at2[p].m.b : at2[p].m.a), o2 = jointById(at2[q].m.a === lj.id ? at2[q].m.b : at2[q].m.a);
+        var d = (o1.x - lj.x) * (o2.x - lj.x) + (o1.y - lj.y) * (o2.y - lj.y);
+        var c = d / (Math.hypot(o1.x - lj.x, o1.y - lj.y) * Math.hypot(o2.x - lj.x, o2.y - lj.y));
+        if (Math.abs(c) < 0.0175) rightAngle = true;
+      }
+      add(!rightAngle, 'No right angle at the load point');
+    }
+    var mism = rows.filter(function (r) { return r.mismatch; });
+    if (ok) add(!mism.length, 'Stock matches tension or compression' + (mism.length ? ': member ' + mism.map(function (r) { return r.i + 1; }).join(', ') : ''));
+    return out;
   }
 
   // ---------- view ----------
@@ -564,7 +659,7 @@
       html += '</div></div>';
       html += '<div class="insp-section"><h3>Load</h3><div class="field-row">' +
         field('fx', 'Fx', ld.fx || 0, u.force) + field('fy', 'Fy', ld.fy || 0, u.force) + '</div>' +
-        (simple() ? '</div>' : '<label class="check"><input type="checkbox" id="bracket"' + (model.bracket[j.id] ? ' checked' : '') + '> Mounting bracket: leave the members attached here out of the overall safety factor</label></div>');
+        (simple() ? '</div>' : '<label class="check"><input type="checkbox" id="bracket"' + (isBracket(j.id) ? ' checked' : '') + (Math.abs(j.x) < 1e-6 && Math.abs(j.y) < 1e-6 ? ' disabled' : '') + '> Mounting bracket: leave the members attached here out of the overall safety factor' + (Math.abs(j.x) < 1e-6 && Math.abs(j.y) < 1e-6 ? ' (always on at 0, 0)' : '') + '</label></div>');
       if (solved && !simple()) {
         var d = result.u[j.id], r = result.reactions[j.id];
         html += '<div class="insp-section"><h3>Results</h3><dl class="readout">' +
@@ -585,7 +680,10 @@
           '<dt>Safety factor</dt><dd>' + (isFinite(row.sf) ? num(row.sf, 2) : '–') + '</dd>') : '') +
         '</dl></div>';
       html += '<div class="insp-section"><h3>Machining</h3><dl class="readout">' +
-        '<dt>Stock</dt><dd>' + esc(row.stock) + '</dd>' +
+        '</dl><label class="field" style="margin:6px 0 8px">Stock<select id="stockSel">' +
+        '<option value="">Automatic (' + esc(row.stock) + ')</option>' +
+        STOCK_IDS.map(function (id) { return '<option value="' + id + '"' + (m.stock === id ? ' selected' : '') + '>' + esc(model.settings.stocks[id].name) + '</option>'; }).join('') +
+        '</select></label>' + (row.mismatch ? '<p class="panel-note warn-text" style="margin:0 0 8px">' + (row.tc === 'c' ? 'This member is in compression, so it needs tube stock.' : 'This member is in tension; flat bar is lighter.') + '</p>' : '') + '<dl class="readout">' +
         '<dt>Rough cut</dt><dd>' + fLen(row.rough) + ' ' + u.len + '</dd>' +
         '<dt>Finish length</dt><dd>' + fLen(row.finish) + ' ' + u.len + '</dd>' +
         (simple() ? '' : '<dt>Weight</dt><dd>' + num(row.weight, 1) + ' g</dd>') + '</dl></div>';
@@ -635,6 +733,10 @@
     var loaded = Object.keys(model.loads);
     add(loaded.length > 0, loaded.length ? 'Loaded at joint ' + loaded.map(function (id) { return labelOf(Number(id)); }).join(', ') : 'No loads yet');
     if (result.status === 'unstable' || result.status === 'error') add(false, esc(result.message));
+    if (data.rules && data.rules.length) {
+      items.push('<li class="check-head">E6 lab rules</li>');
+      data.rules.forEach(function (r) { add(r.ok, esc(r.text)); });
+    }
     return items.join('');
   }
 
@@ -651,6 +753,7 @@
       item('Status', result.status === 'empty' ? 'nothing to solve yet' : 'not solved');
     }
     item('Weight', num(data.weight, 0) + ' g (' + num(data.weight / 453.592, 2) + ' lb)');
+    if (solved && data.score) item('Predicted score', num(data.score, 1));
     $('#summary').innerHTML = parts.join('');
   }
 
@@ -689,6 +792,14 @@
     return h;
   }
 
+  function stocksUsed(data) {
+    var st = model.settings, seen = {};
+    data.rows.forEach(function (r) { seen[r.stockId] = true; });
+    return STOCK_IDS.filter(function (id) { return seen[id]; }).map(function (id) {
+      var sk = st.stocks[id];
+      return esc(sk.name) + ': rough = c-c ' + sign(sk.rough) + ', finish = c-c ' + sign(sk.finish);
+    }).join('. ');
+  }
   function sign(v) { return (v >= 0 ? '+ ' : '- ') + fLen(Math.abs(v)); }
   function ruleSvg(r, span, minorStep, majorStep) {
     var W = 1000, x = function (v) { return Math.max(0, v) / span * W; };
@@ -714,10 +825,9 @@
 
     var h = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="6" fill="#7D8A83"/></pattern></defs></svg>';
     h += '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
-      '. Lengths in ' + u.len + '. Tension stock (' + esc(st.stock.t) + '): rough = c-c ' + sign(st.offsets.tRough) + ', finish = c-c ' + sign(st.offsets.tFinish) +
-      '. Compression stock (' + esc(st.stock.c) + '): rough = c-c ' + sign(st.offsets.cRough) + ', finish = c-c ' + sign(st.offsets.cFinish) + '.</p></div>';
-    if (!solved) h += '<p class="panel-note">The truss isn\'t solved yet, so every piece is listed as tension stock. ' + esc(result.message || '') + '</p>';
-    else h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offsets in Lab settings. Tension and zero-force members use ' + esc(st.stock.t) + ', compression members use ' + esc(st.stock.c) + '.</p>';
+      '. Lengths in ' + u.len + '. ' + stocksUsed(data) + '.</p></div>';
+    if (!solved) h += '<p class="panel-note">The truss isn\'t solved yet, so members without a chosen stock are listed as ' + esc(st.stocks[st.defaultStock.t].name) + '. ' + esc(result.message || '') + '</p>';
+    else h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offset for each stock, from the lab design sheet. Members use ' + esc(st.stocks[st.defaultStock.t].name) + ' in tension and ' + esc(st.stocks[st.defaultStock.c].name) + ' in compression unless you pick a stock for them.</p>';
     h += '<div class="cut-legend"><span><i class="sw finish"></i>Finish length</span><span><i class="sw rough"></i>Extra for the rough cut</span><span><i class="sw cc"></i>Center-to-center length</span></div>';
 
     var scale = '<div class="rule-scale">';
@@ -727,15 +837,15 @@
     h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th><th class="left">Stock</th><th class="left">Tabs</th><th>Length c-c</th><th>Rough cut</th><th>Finish</th><th>Weight (g)</th><th class="left rule-cell">' + scale + '</th><th class="print-only">Done</th></tr></thead><tbody>';
     var totals = {};
     data.rows.forEach(function (r) {
-      var key = r.tc === 'c' ? 'c' : 't';
+      var key = r.stockId;
       totals[key] = totals[key] || { n: 0, rough: 0, name: r.stock };
       totals[key].n++; totals[key].rough += r.rough;
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td><td>' + tcTag(r) + '</td>' +
-        '<td class="left">' + esc(r.stock) + '</td><td class="left">' + (r.tab || '–') + '</td><td class="num">' + fLen(r.L) + '</td><td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td>' +
+        '<td class="left' + (r.mismatch ? ' warn-text' : '') + '">' + esc(r.stock) + '</td><td class="left">' + (r.tab || '–') + '</td><td class="num">' + fLen(r.L) + '</td><td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td>' +
         '<td class="num">' + num(r.weight, 1) + '</td><td class="rule-cell">' + ruleSvg(r, span, minorStep, majorStep) + '</td><td class="print-only"><span class="tickbox"></span></td></tr>';
     });
     h += '</tbody></table><div class="stock-totals">';
-    ['t', 'c'].forEach(function (k) {
+    STOCK_IDS.forEach(function (k) {
       if (!totals[k]) return;
       h += '<div>' + esc(totals[k].name) + ': <b>' + totals[k].n + '</b> pieces, <b>' + fLen(totals[k].rough) + ' ' + u.len + '</b> of stock before saw kerf</div>';
     });
@@ -749,7 +859,7 @@
     model.joints.forEach(function (j, idx) {
       var ld = model.loads[j.id] || {}, r = solved && result.reactions[j.id], d = solved && result.u[j.id];
       var sel = ui.sel && ui.sel.type === 'joint' && ui.sel.id === j.id;
-      h += '<tr data-j="' + j.id + '"' + (sel ? ' class="selected"' : '') + '><td>' + jointLabel(idx) + (model.bracket[j.id] ? ' (bracket)' : '') + '</td>' +
+      h += '<tr data-j="' + j.id + '"' + (sel ? ' class="selected"' : '') + '><td>' + jointLabel(idx) + (isBracket(j.id) ? ' (bracket)' : '') + '</td>' +
         '<td class="num">' + fLen(j.x) + '</td><td class="num">' + fLen(j.y) + '</td>' +
         '<td class="left">' + (model.supports[j.id] ? SUPPORT_LABELS[model.supports[j.id]] : '–') + '</td>' +
         '<td class="num">' + (ld.fx ? fForceExact(ld.fx) : '–') + '</td><td class="num">' + (ld.fy ? fForceExact(ld.fy) : '–') + '</td>' +
@@ -763,16 +873,16 @@
     var u = U(), st = model.settings, solved = result.status === 'ok';
     if (!model.members.length) return '<p class="panel-note">Member lengths and cut lengths show up here once you draw members.</p>';
     var h = '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
-      '. Lengths in ' + u.len + '. Tension: rough = c-c ' + sign(st.offsets.tRough) + ', finish = c-c ' + sign(st.offsets.tFinish) +
-      '. Compression: rough = c-c ' + sign(st.offsets.cRough) + ', finish = c-c ' + sign(st.offsets.cFinish) + '.</p></div>';
-    h += solved ? '<p class="panel-note">Rough cut and finish length = center-to-center length plus the offset for tension or compression stock (set in Lab settings).</p>'
-      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + ' Until it solves, every piece is listed with the tension offsets.</p>';
-    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length c-c (' + u.len + ')</th><th>Force (' + u.force + ')</th><th class="left">T or C</th><th>Rough cut (' + u.len + ')</th><th>Finish length (' + u.len + ')</th><th class="print-only">Done</th></tr></thead><tbody>';
+      '. Lengths in ' + u.len + '. ' + stocksUsed(data) + '.</p></div>';
+    h += solved ? '<p class="panel-note">Rough cut and finish length = center-to-center length plus the offset for that stock, from the lab design sheet. Click a member to change its stock.</p>'
+      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + ' Until it solves, members are listed with tension stock.</p>';
+    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length c-c (' + u.len + ')</th><th>Force (' + u.force + ')</th><th class="left">T or C</th><th class="left">Stock</th><th>Rough cut (' + u.len + ')</th><th>Finish length (' + u.len + ')</th><th class="print-only">Done</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
       var tcText = !r.tc ? '–' : r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero force';
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td>' +
         '<td class="num">' + fLen(r.L) + '</td><td class="num">' + (solved ? fForceExact(Math.abs(r.F)) : '–') + '</td>' +
         '<td class="left">' + (r.tc ? tcTag(r) + ' ' + tcText : '–') + '</td>' +
+        '<td class="left' + (r.mismatch ? ' warn-text' : '') + '">' + esc(r.stock) + '</td>' +
         '<td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td><td class="print-only"><span class="tickbox"></span></td></tr>';
     });
     return h + '</tbody></table>';
@@ -1011,6 +1121,11 @@
         if (el.checked) model.bracket[j.id] = true; else delete model.bracket[j.id];
       } else return;
       refresh();
+    } else if (ui.sel.type === 'member' && id === 'stockSel') {
+      var ms = model.members[memberIndex(ui.sel.id)];
+      checkpoint();
+      if (el.value) ms.stock = el.value; else delete ms.stock;
+      refresh();
     } else if (ui.sel.type === 'member' && id === 'cap') {
       var m = model.members[memberIndex(ui.sel.id)], c = readNum(el);
       checkpoint();
@@ -1201,23 +1316,30 @@
     var u = U(), st = model.settings;
     var snaps = st.units === 'metric' ? [1, 2, 5, 10, 25] : [0.05, 0.1, 0.125, 0.25, 0.5, 1];
     var theme = currentTheme();
-    var h = '<fieldset><legend>' + (simple() ? 'Units' : 'Units and material') + '</legend><div class="settings-grid">' +
-      '<label class="field">Units<select data-special="units"><option value="imperial"' + (st.units === 'imperial' ? ' selected' : '') + '>in, lbf</option><option value="metric"' + (st.units === 'metric' ? ' selected' : '') + '>mm, N</option></select></label>' +
+    var h = '<fieldset><legend>Drawing' + (simple() ? '' : ' and material') + '</legend><div class="settings-grid">' +
       (simple() ? '' : sField('E', 'Elastic modulus E', u.E) + sField('A', 'Cross-section area A', u.A)) +
       '<label class="field">Grid snap<select data-special="snap">' + snaps.map(function (s) { return '<option value="' + s + '"' + (Math.abs(s - st.snap) < 1e-9 ? ' selected' : '') + '>' + s + ' ' + u.len + '</option>'; }).join('') + '</select></label>' +
-      '</div>' + (simple() ? '' : '<p class="hint">E and A only change displacements, unless the truss is statically indeterminate.</p>') + '</fieldset>';
-    h += '<fieldset><legend>Machining offsets</legend><p class="hint">Rough cut and finish length = center-to-center length + offset. Use a negative number to subtract. Defaults come from the team spreadsheet.</p><div class="settings-grid">' +
-      sText('stock.t', 'Tension stock') + sField('offsets.tRough', 'Tension rough cut', u.len) + sField('offsets.tFinish', 'Tension finish', u.len) +
-      sText('stock.c', 'Compression stock') + sField('offsets.cRough', 'Compression rough cut', u.len) + sField('offsets.cFinish', 'Compression finish', u.len) +
-      '</div></fieldset>';
-    if (!simple()) h += '<fieldset><legend>Capacity</legend><p class="hint">Safety factor = capacity / member force. You can override the capacity of one member from the side panel.</p><div class="settings-grid">' +
-      sField('capacity.t', 'Max tension force', u.force) + sField('capacity.c', 'Max compression, centered tabs', u.force) +
-      sField('capacity.offA', 'Offset tabs: base force', u.force) + sField('capacity.offB', 'Offset tabs: minus per length', u.force + '/' + u.len) + '</div>' +
-      '<p class="hint">Offset-tab capacity = base force - (minus per length x finish length). The defaults reproduce the spreadsheet: 2140 - 6.0 x finish.</p></fieldset>';
-    if (!simple()) h += '<fieldset><legend>Weight</legend><p class="hint">Member weight = mass per length x finish length + end fittings. Defaults are fitted to the team spreadsheet.</p><div class="settings-grid">' +
-      sField('weight.tPerLen', 'Tension stock', u.perLen) + sField('weight.tEnds', 'Tension ends, per member', 'g') +
-      sField('weight.cPerLen', 'Compression stock', u.perLen) + sField('weight.cEnds', 'Compression ends, per member', 'g') +
-      sField('weight.perJoint', 'Pin hardware, per joint', 'g') + '</div></fieldset>';
+      '</div>' + (simple() ? '' : '<p class="hint">The lab says to use A = 0.25 in² and E = 69 GPa (10,000,000 psi) for every member. E and A only change the predicted deflection, unless the truss is statically indeterminate.</p>') + '</fieldset>';
+    var cols = simple() ? [['rough', 'Rough cut', u.len], ['finish', 'Finish', u.len]]
+      : [['rough', 'Rough cut', u.len], ['finish', 'Finish', u.len], ['perIn', 'Weight', 'g/in'], ['ends', 'Ends', 'g'], ['cap', 'Capacity', u.force], ['offA', 'Offset base', u.force], ['offB', 'Offset per in', u.force]];
+    h += '<fieldset><legend>Stock</legend><p class="hint">From the E6 Lab 3 design sheet. Rough cut and finish length = center-to-center length + offset' +
+      (simple() ? '.' : '; weight = per-inch weight x finish length + end fittings; offset-tab capacity = base - per in x finish length.') + '</p>' +
+      '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th class="left">Stock</th><th class="left">Used for</th>' +
+      cols.map(function (c) { return '<th>' + c[1] + ' <em>' + esc(c[2]) + '</em></th>'; }).join('') + '</tr></thead><tbody>';
+    STOCK_IDS.forEach(function (id) {
+      var sk = st.stocks[id];
+      h += '<tr><td class="left">' + esc(sk.name) + '</td><td class="left">' + (sk.kind === 't' ? 'Tension' : 'Compression') + '</td>' +
+        cols.map(function (c) {
+          if (sk[c[0]] === undefined) return '<td>–</td>';
+          return '<td><input type="number" step="any" data-setting="stocks.' + id + '.' + c[0] + '" value="' + esc(sk[c[0]]) + '" aria-label="' + esc(sk.name + ' ' + c[1]) + '"></td>';
+        }).join('') + '</tr>';
+    });
+    h += '</tbody></table></div><div class="settings-grid">' +
+      '<label class="field">Default tension stock<select data-special="defT">' + STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 't'; }).map(function (id) { return '<option value="' + id + '"' + (st.defaultStock.t === id ? ' selected' : '') + '>' + esc(st.stocks[id].name) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="field">Default compression stock<select data-special="defC">' + STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 'c'; }).map(function (id) { return '<option value="' + id + '"' + (st.defaultStock.c === id ? ' selected' : '') + '>' + esc(st.stocks[id].name) + '</option>'; }).join('') + '</select></label>' +
+      (simple() ? '' : sField('pin.perJoint', 'Pin hardware per joint', 'g')) +
+      '</div>' + (simple() ? '' : '<p class="hint">Pin hardware = (joints - 2) x per joint. The two support joints use the test fixture\'s pins.</p>') + '</fieldset>';
+    h += '<fieldset><legend>Checks</legend><label class="check"><input type="checkbox" data-special="rules"' + (st.rules ? ' checked' : '') + '> Check the E6 lab design rules (member lengths, angles, load point, supports)</label></fieldset>';
     h += '<fieldset><legend>Appearance</legend><div class="settings-grid"><label class="field">Theme<select data-special="theme">' +
       ['system', 'light', 'dark'].map(function (t) { return '<option value="' + t + '"' + (t === theme ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>'; }).join('') +
       '</select></label></div></fieldset>';
@@ -1233,12 +1355,14 @@
       checkpoint();
       setPath(model.settings, path, v);
       refresh();
-    } else if (el.dataset.special === 'units') {
+    } else if (el.dataset.special === 'defT' || el.dataset.special === 'defC') {
       checkpoint();
-      convertUnits(el.value);
-      fitView();
+      model.settings.defaultStock[el.dataset.special === 'defT' ? 't' : 'c'] = el.value;
       refresh();
-      renderSettings();
+    } else if (el.dataset.special === 'rules') {
+      checkpoint();
+      model.settings.rules = el.checked;
+      refresh();
     } else if (el.dataset.special === 'snap') {
       checkpoint();
       model.settings.snap = Number(el.value);
@@ -1250,32 +1374,11 @@
   });
   $('#btnResetSettings').addEventListener('click', function () {
     checkpoint();
-    var units = model.settings.units;
     model.settings = defaultSettings();
-    if (units === 'metric') convertUnits('metric');
     refresh();
     renderSettings();
     toast('Lab settings reset to the defaults.');
   });
-
-  function convertUnits(to) {
-    var st = model.settings;
-    if (st.units === to) return;
-    var toMetric = to === 'metric';
-    var kL = toMetric ? 25.4 : 1 / 25.4, kF = toMetric ? 4.448222 : 1 / 4.448222;
-    var kE = toMetric ? 0.00689476 : 1 / 0.00689476, kA = kL * kL;
-    var r = function (v, d) { var p = Math.pow(10, d); return Math.round(v * p) / p; };
-    model.joints.forEach(function (j) { j.x = r(j.x * kL, 4); j.y = r(j.y * kL, 4); });
-    Object.keys(model.loads).forEach(function (id) { var l = model.loads[id]; l.fx = r(l.fx * kF, 3); l.fy = r(l.fy * kF, 3); });
-    model.members.forEach(function (m) { if (m.cap != null) m.cap = r(m.cap * kF, 2); });
-    st.E = r(st.E * kE, 2); st.A = r(st.A * kA, 4);
-    Object.keys(st.offsets).forEach(function (k) { st.offsets[k] = r(st.offsets[k] * kL, 3); });
-    st.capacity.t = r(st.capacity.t * kF, 1); st.capacity.c = r(st.capacity.c * kF, 1);
-    st.capacity.offA = r(st.capacity.offA * kF, 1); st.capacity.offB = r(st.capacity.offB * kF / kL, 4);
-    st.weight.tPerLen = r(st.weight.tPerLen / kL, 4); st.weight.cPerLen = r(st.weight.cPerLen / kL, 4);
-    st.snap = toMetric ? 5 : 0.25;
-    st.units = to;
-  }
 
   function applyTheme() {
     var t = currentTheme();
