@@ -5,10 +5,13 @@
   var STORE_KEY = 'truss-lab-v1';
   var THEME_KEY = 'truss-lab-theme';
 
-  var UNITS = {
-    imperial: { len: 'in', force: 'lbf', stress: 'psi', E: 'psi', A: 'in²', perLen: 'g/in' },
-    metric: { len: 'mm', force: 'N', stress: 'MPa', E: 'MPa', A: 'mm²', perLen: 'g/mm' }
-  };
+  // Everything is stored in inches, lbf, psi and in²; these factors convert for display and input.
+  var LEN_F = { 'in': 1, 'mm': 25.4, 'cm': 2.54, 'm': 0.0254 };
+  var FORCE_F = { 'lbf': 1, 'N': 4.448222, 'kN': 0.004448222 };
+  var E_F = { 'psi': 1, 'ksi': 0.001, 'MPa': 0.00689476, 'GPa': 0.00000689476, 'Pa': 6894.76 };
+  var A_F = { 'in²': 1, 'mm²': 645.16, 'cm²': 6.4516, 'm²': 0.00064516 };
+  var SNAPS = { 'in': [0.05, 0.1, 0.125, 0.25, 0.5, 1], 'mm': [1, 2, 5, 10, 25], 'cm': [0.1, 0.25, 0.5, 1, 2.5], 'm': [0.001, 0.0025, 0.005, 0.01, 0.025] };
+  function defaultUnits() { return { len: 'in', force: 'lbf', E: 'GPa', A: 'in²' }; }
 
   // Stock catalog from the E6 Lab 3 design sheet (inches, lbf, grams).
   // rough/finish: offset added to the center-to-center length.
@@ -24,8 +27,8 @@
   }
   function defaultSettings() {
     return {
-      units: 'imperial',
-      E: 1e7,
+      units: defaultUnits(),
+      E: 69e9 / 6894.76, // the lab's 69 GPa, stored in psi
       A: 0.25,
       snap: 0.25,
       stocks: defaultStocks(),
@@ -74,15 +77,29 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   }
-  function U() { return UNITS[model.settings.units]; }
-  function lenDigits() { return model.settings.units === 'metric' ? 1 : 2; }
+  function U() {
+    var u = model.settings.units;
+    return { len: u.len, force: u.force, E: u.E, A: u.A, stress: u.force === 'lbf' ? 'psi' : 'MPa' };
+  }
+  function lenDigits() { return { 'in': 2, 'mm': 1, 'cm': 2, 'm': 4 }[U().len]; }
+  function dispDigits() { return { 'in': 4, 'mm': 3, 'cm': 4, 'm': 5 }[U().len]; }
+  // stored value -> display value, and back
+  function dLen(v) { return v * LEN_F[U().len]; }
+  function iLen(v) { return v / LEN_F[U().len]; }
+  function dF(v) { return v * FORCE_F[U().force]; }
+  function iF(v) { return v / FORCE_F[U().force]; }
+  function dStress(v) { return U().stress === 'psi' ? v : v * 0.00689476; }
+  function clean(v) { return Number(Number(v).toPrecision(10)); }
+  function fDisp(v) { return num(dLen(v), dispDigits()); }
+  function fStress(v) { return num(dStress(v), U().stress === 'psi' ? 0 : 1); }
+  function pt(x, y) { return '(' + fLen(x) + ', ' + fLen(y) + ')'; }
   function num(v, d) {
     if (v === null || v === undefined || !isFinite(v)) return '–';
     return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
-  function fLen(v) { return num(v, lenDigits()); }
-  function fForce(v) { return num(v, Math.abs(v) >= 100 ? 0 : 1); }
-  function fForceExact(v) { return num(v, 1); }
+  function fLen(v) { return num(dLen(v), lenDigits()); }
+  function fForce(v) { var d = dF(v); return num(d, Math.abs(d) >= 100 ? 0 : Math.abs(d) >= 1 ? 1 : 3); }
+  function fForceExact(v) { var d = dF(v); return num(d, Math.abs(d) >= 1 ? 1 : 3); }
   function round6(v) { return Math.round(v * 1e6) / 1e6; }
   function jointLabel(i) {
     var s = ''; i += 1;
@@ -154,7 +171,7 @@
       Object.assign(out.settings.stocks.tube1, { cap: ms.capacity.c, offA: ms.capacity.offA || 2140, offB: ms.capacity.offB || 6 });
     }
     ['stock', 'offsets', 'capacity', 'weight'].forEach(function (k) { delete out.settings[k]; });
-    out.settings.units = 'imperial';
+    out.settings.units = typeof ms.units === 'object' && ms.units ? Object.assign(defaultUnits(), ms.units) : defaultUnits();
     out.members.forEach(function (mb) { if (mb.stock && !out.settings.stocks[mb.stock]) delete mb.stock; });
     out.supports = out.supports || {};
     out.loads = out.loads || {};
@@ -313,14 +330,14 @@
     var lower = joints.filter(function (j) { return near(j, 0, 0); })[0];
     var upper = joints.filter(function (j) { return near(j, 0, 12); })[0];
     add(!!(lower && upper && model.supports[lower.id] && model.supports[upper.id]),
-      'Supports at (0, 0) and (0, 12)');
+      'Supports at ' + pt(0, 0) + ' and ' + pt(0, 12));
     if (lower && upper) add(!hasMember(lower.id, upper.id), 'No member between the supports');
 
     var bad = rows.filter(function (r) { return r.L < 2 - 1e-9 || r.L > 15.3 + 1e-9; });
-    add(!bad.length, 'Member lengths 2 to 15.3 in' + (bad.length ? ': member ' + bad.map(function (r) { return r.i + 1; }).join(', ') : ''));
+    add(!bad.length, 'Member lengths ' + fLen(2) + ' to ' + fLen(15.3) + ' ' + U().len + (bad.length ? ': member ' + bad.map(function (r) { return r.i + 1; }).join(', ') : ''));
 
     var lowJ = joints.filter(function (j) { return j.y < -1 - 1e-9; });
-    add(!lowJ.length, 'Nothing more than 1 in below the bottom support' + (lowJ.length ? ': joint ' + lowJ.map(function (j) { return labelOf(j.id); }).join(', ') : ''));
+    add(!lowJ.length, 'Nothing more than ' + fLen(1) + ' ' + U().len + ' below the bottom support' + (lowJ.length ? ': joint ' + lowJ.map(function (j) { return labelOf(j.id); }).join(', ') : ''));
 
     var crowded = [], compCrowded = [], tight = [];
     joints.forEach(function (j) {
@@ -343,7 +360,7 @@
     var loaded = joints.filter(function (j) { var l = model.loads[j.id]; return l && (l.fx || l.fy); });
     if (loaded.length) {
       var lj = loaded[0], maxY = Math.max.apply(null, joints.map(function (j) { return j.y; }));
-      add(near(lj, 30, 18), 'Load at (30, 18)');
+      add(near(lj, 30, 18), 'Load at ' + pt(30, 18));
       add(lj.y >= maxY - 1e-9, 'Load point is the highest point');
       var rightAngle = false, at2 = rows.filter(function (r) { return r.m.a === lj.id || r.m.b === lj.id; });
       for (var p = 0; p < at2.length; p++) for (var q = p + 1; q < at2.length; q++) {
@@ -381,8 +398,7 @@
   function fitView() {
     var z = size();
     if (!model.joints.length) {
-      var mm = model.settings.units === 'metric';
-      view = { x: mm ? 300 : 12, y: mm ? 150 : 6, s: mm ? 30 / 25.4 : 30 };
+      view = { x: 12, y: 6, s: 30 };
       return;
     }
     var xs = model.joints.map(function (j) { return j.x; }), ys = model.joints.map(function (j) { return j.y; });
@@ -441,17 +457,19 @@
     var solved = result && result.status === 'ok';
 
     // grid
-    var step = niceStep(16 / view.s), major = step * 5;
+    // pick grid spacing in display units so the labels are round numbers
+    var lf = LEN_F[U().len];
+    var stepD = niceStep(16 * lf / view.s), step = stepD / lf, major = step * 5;
     var tl = toW(0, 0), br = toW(z.w, z.h);
     var gx0 = Math.floor(tl[0] / step) * step, gy0 = Math.floor(br[1] / step) * step;
     var minor = '', majorL = '', labels = '';
-    var dec = Math.max(0, -Math.floor(Math.log10(major) + 1e-9));
+    var dec = Math.max(0, -Math.floor(Math.log10(stepD * 5) + 1e-9));
     for (var gx = gx0; gx <= br[0]; gx += step) {
       if (Math.abs(gx) < step / 2) continue;
       var sx = toS(gx, 0)[0];
       if (Math.abs(gx / major - Math.round(gx / major)) < 1e-6) {
         majorL += 'M' + sx + ' 0V' + z.h;
-        labels += '<text class="grid-label" x="' + (sx + 3) + '" y="' + (z.h - 6) + '">' + round6(gx).toFixed(dec) + '</text>';
+        labels += '<text class="grid-label" x="' + (sx + 3) + '" y="' + (z.h - 6) + '">' + round6(gx * lf).toFixed(dec) + '</text>';
       } else minor += 'M' + sx + ' 0V' + z.h;
     }
     for (var gy = gy0; gy <= tl[1]; gy += step) {
@@ -459,7 +477,7 @@
       var sy = toS(0, gy)[1];
       if (Math.abs(gy / major - Math.round(gy / major)) < 1e-6) {
         majorL += 'M0 ' + sy + 'H' + z.w;
-        labels += '<text class="grid-label" x="4" y="' + (sy - 3) + '">' + round6(gy).toFixed(dec) + '</text>';
+        labels += '<text class="grid-label" x="4" y="' + (sy - 3) + '">' + round6(gy * lf).toFixed(dec) + '</text>';
       } else minor += 'M0 ' + sy + 'H' + z.w;
     }
     var o = toS(0, 0);
@@ -651,20 +669,20 @@
       var sup = model.supports[j.id] || 'none';
       html += '<div class="insp-eyebrow">Joint</div><h2 class="insp-title">Joint ' + labelOf(j.id) + '</h2>';
       html += '<div class="insp-section"><h3>Position</h3><div class="field-row">' +
-        field('jx', 'x', j.x, u.len) + field('jy', 'y', j.y, u.len) + '</div></div>';
+        field('jx', 'x', clean(dLen(j.x)), u.len) + field('jy', 'y', clean(dLen(j.y)), u.len) + '</div></div>';
       html += '<div class="insp-section"><h3>Support</h3><div class="support-picker">';
       ['none', 'pin', 'roller-y', 'roller-x'].forEach(function (k) {
         html += '<button type="button" data-support="' + k + '" aria-pressed="' + (sup === k) + '">' + SUPPORT_ICONS[k] + SUPPORT_LABELS[k] + '</button>';
       });
       html += '</div></div>';
       html += '<div class="insp-section"><h3>Load</h3><div class="field-row">' +
-        field('fx', 'Fx', ld.fx || 0, u.force) + field('fy', 'Fy', ld.fy || 0, u.force) + '</div>' +
+        field('fx', 'Fx', clean(dF(ld.fx || 0)), u.force) + field('fy', 'Fy', clean(dF(ld.fy || 0)), u.force) + '</div>' +
         (simple() ? '</div>' : '<label class="check"><input type="checkbox" id="bracket"' + (isBracket(j.id) ? ' checked' : '') + (Math.abs(j.x) < 1e-6 && Math.abs(j.y) < 1e-6 ? ' disabled' : '') + '> Mounting bracket: leave the members attached here out of the overall safety factor' + (Math.abs(j.x) < 1e-6 && Math.abs(j.y) < 1e-6 ? ' (always on at 0, 0)' : '') + '</label></div>');
       if (solved && !simple()) {
         var d = result.u[j.id], r = result.reactions[j.id];
         html += '<div class="insp-section"><h3>Results</h3><dl class="readout">' +
-          '<dt>Displacement x</dt><dd>' + num(d.x, 4) + ' ' + u.len + '</dd>' +
-          '<dt>Displacement y</dt><dd>' + num(d.y, 4) + ' ' + u.len + '</dd>' +
+          '<dt>Displacement x</dt><dd>' + fDisp(d.x) + ' ' + u.len + '</dd>' +
+          '<dt>Displacement y</dt><dd>' + fDisp(d.y) + ' ' + u.len + '</dd>' +
           (r ? '<dt>Reaction Rx</dt><dd>' + fForceExact(r.x) + ' ' + u.force + '</dd><dt>Reaction Ry</dt><dd>' + fForceExact(r.y) + ' ' + u.force + '</dd>' : '') +
           '</dl></div>';
       }
@@ -676,10 +694,10 @@
       html += '<div class="insp-section"><dl class="readout">' +
         '<dt>Length c-c</dt><dd>' + fLen(row.L) + ' ' + u.len + '</dd>' +
         (solved ? '<dt>Force</dt><dd>' + (row.tc === 'z' ? '0' : fForceExact(Math.abs(row.F)) + ' ' + u.force + ' ' + (row.tc === 't' ? 'tension' : 'compression')) + '</dd>' +
-          (simple() ? '' : '<dt>Stress</dt><dd>' + num(Math.abs(row.stress), 0) + ' ' + u.stress + '</dd>' +
+          (simple() ? '' : '<dt>Stress</dt><dd>' + fStress(Math.abs(row.stress)) + ' ' + u.stress + '</dd>' +
           '<dt>Safety factor</dt><dd>' + (isFinite(row.sf) ? num(row.sf, 2) : '–') + '</dd>') : '') +
         '</dl></div>';
-      html += '<div class="insp-section"><h3>Machining</h3><dl class="readout">' +
+      if (!simple()) html += '<div class="insp-section"><h3>Machining</h3><dl class="readout">' +
         '</dl><label class="field" style="margin:6px 0 8px">Stock<select id="stockSel">' +
         '<option value="">Automatic (' + esc(row.stock) + ')</option>' +
         STOCK_IDS.map(function (id) { return '<option value="' + id + '"' + (m.stock === id ? ' selected' : '') + '>' + esc(model.settings.stocks[id].name) + '</option>'; }).join('') +
@@ -693,8 +711,8 @@
           '<button type="button" role="radio" data-tab-type="cen" aria-checked="' + (m.tab !== 'off') + '">Centered</button>' +
           '<button type="button" role="radio" data-tab-type="off" aria-checked="' + (m.tab === 'off') + '">Offset</button></div></div>';
       }
-      if (!simple()) html += field('cap', 'Max force for this member', m.cap != null ? m.cap : '', u.force, ' placeholder="' + num(row.defCap, 0).replace(/,/g, '') + '"') +
-        '<p class="panel-note" style="margin-top:6px">Leave blank to use the default from Lab settings' + (row.tc === 'c' && m.tab === 'off' ? ' (offset tabs: ' + num(row.defCap, 0) + ' ' + u.force + ' at this length)' : '') + '.</p></div>';
+      if (!simple()) html += field('cap', 'Max force for this member', m.cap != null ? clean(dF(m.cap)) : '', u.force, ' placeholder="' + num(dF(row.defCap), 0).replace(/,/g, '') + '"') +
+        '<p class="panel-note" style="margin-top:6px">Leave blank to use the default from Lab settings' + (row.tc === 'c' && m.tab === 'off' ? ' (offset tabs: ' + fForce(row.defCap) + ' ' + u.force + ' at this length)' : '') + '.</p></div>';
       html += '<div class="insp-actions"><button type="button" class="btn danger small" data-action="delete">Delete member</button></div>';
     } else {
       ui.sel = null;
@@ -748,7 +766,7 @@
       item('Max tension', data.maxT ? fForceExact(data.maxT.F) + ' ' + u.force + ' (member ' + (data.maxT.i + 1) + ')' : '–', 't');
       item('Max compression', data.maxC ? fForceExact(-data.maxC.F) + ' ' + u.force + ' (member ' + (data.maxC.i + 1) + ')' : '–', 'c');
       item('Lowest safety factor', data.minSF ? num(data.minSF.sf, 2) + ' (member ' + (data.minSF.i + 1) + ')' : '–', data.minSF && data.minSF.sf < 1 ? 'bad' : '');
-      if (data.defl) item('Deflection at ' + labelOf(data.defl.joint.id) + ' (' + data.defl.dir + ')', num(data.defl.value, 4) + ' ' + u.len);
+      if (data.defl) item('Deflection at ' + labelOf(data.defl.joint.id) + ' (' + data.defl.dir + ')', fDisp(data.defl.value) + ' ' + u.len);
     } else {
       item('Status', result.status === 'empty' ? 'nothing to solve yet' : 'not solved');
     }
@@ -783,7 +801,7 @@
         '<td class="num">' + fLen(r.L) + '</td>' +
         '<td class="num">' + (solved ? fForceExact(r.F) : '–') + '</td>' +
         '<td>' + tcTag(r) + '</td><td class="left">' + (r.tab || '–') + '</td>' +
-        '<td class="num">' + (solved ? num(r.stress, 0) : '–') + '</td>' +
+        '<td class="num">' + (solved ? fStress(r.stress) : '–') + '</td>' +
         '<td class="num">' + num(r.cap, 0) + (r.m.cap != null ? '*' : '') + '</td>' +
         '<td class="num ' + sfCls + '">' + (solved && isFinite(r.sf) ? num(r.sf, 2) : '–') + '</td></tr>';
     });
@@ -808,19 +826,20 @@
       var major = Math.abs(t / majorStep - Math.round(t / majorStep)) < 1e-6;
       s += '<line class="tick' + (major ? ' major' : '') + '" x1="' + x(t) + '" x2="' + x(t) + '" y1="' + (major ? 18 : 21) + '" y2="26"/>';
     }
-    var lo = Math.min(r.finish, r.rough), hi = Math.max(r.finish, r.rough);
-    s += '<rect class="finish ' + (r.tc || 't') + '" x="0" y="4" width="' + x(r.finish) + '" height="12"/>';
+    var fin = dLen(r.finish), rgh = dLen(r.rough), cc = dLen(r.L);
+    var lo = Math.min(fin, rgh), hi = Math.max(fin, rgh);
+    s += '<rect class="finish ' + (r.tc || 't') + '" x="0" y="4" width="' + x(fin) + '" height="12"/>';
     if (hi - lo > 1e-9) s += '<rect class="rough" x="' + x(lo) + '" y="4" width="' + (x(hi) - x(lo)) + '" height="12"/>';
-    s += '<line class="cc" x1="' + x(r.L) + '" x2="' + x(r.L) + '" y1="0" y2="20"/>';
+    s += '<line class="cc" x1="' + x(cc) + '" x2="' + x(cc) + '" y1="0" y2="20"/>';
     return s + '</svg>';
   }
   function renderCut(data) {
     var u = U(), st = model.settings, solved = result.status === 'ok';
     if (!model.members.length) return '<p class="panel-note">The cut list fills in once you draw members.</p>';
-    var metric = st.units === 'metric';
     var maxLen = 0;
-    data.rows.forEach(function (r) { maxLen = Math.max(maxLen, r.rough, r.finish, r.L); });
-    var minorStep = metric ? 10 : 0.5, majorStep = metric ? 50 : 1, labelStep = metric ? 100 : 2;
+    data.rows.forEach(function (r) { maxLen = Math.max(maxLen, dLen(r.rough), dLen(r.finish), dLen(r.L)); });
+    var steps = { 'in': [0.5, 1, 2], 'mm': [10, 50, 100], 'cm': [1, 5, 10], 'm': [0.01, 0.05, 0.1] }[u.len];
+    var minorStep = steps[0], majorStep = steps[1], labelStep = steps[2];
     var span = Math.ceil(maxLen / majorStep) * majorStep || majorStep;
 
     var h = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="6" fill="#7D8A83"/></pattern></defs></svg>';
@@ -831,7 +850,7 @@
     h += '<div class="cut-legend"><span><i class="sw finish"></i>Finish length</span><span><i class="sw rough"></i>Extra for the rough cut</span><span><i class="sw cc"></i>Center-to-center length</span></div>';
 
     var scale = '<div class="rule-scale">';
-    for (var t = 0; t <= span + 1e-9; t += labelStep) scale += '<span style="left:' + (t / span * 100) + '%">' + t + '</span>';
+    for (var t = 0; t <= span + 1e-9; t += labelStep) scale += '<span style="left:' + (t / span * 100) + '%">' + round6(t) + '</span>';
     scale += '</div>';
 
     h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th><th class="left">Stock</th><th class="left">Tabs</th><th>Length c-c</th><th>Rough cut</th><th>Finish</th><th>Weight (g)</th><th class="left rule-cell">' + scale + '</th><th class="print-only">Done</th></tr></thead><tbody>';
@@ -864,26 +883,25 @@
         '<td class="left">' + (model.supports[j.id] ? SUPPORT_LABELS[model.supports[j.id]] : '–') + '</td>' +
         '<td class="num">' + (ld.fx ? fForceExact(ld.fx) : '–') + '</td><td class="num">' + (ld.fy ? fForceExact(ld.fy) : '–') + '</td>' +
         '<td class="num">' + (r ? fForceExact(r.x) : '–') + '</td><td class="num">' + (r ? fForceExact(r.y) : '–') + '</td>' +
-        '<td class="num">' + (d ? num(d.x, 4) : '–') + '</td><td class="num">' + (d ? num(d.y, 4) : '–') + '</td></tr>';
+        '<td class="num">' + (d ? fDisp(d.x) : '–') + '</td><td class="num">' + (d ? fDisp(d.y) : '–') + '</td></tr>';
     });
     return h + '</tbody></table>';
   }
 
   function renderSimple(data) {
-    var u = U(), st = model.settings, solved = result.status === 'ok';
-    if (!model.members.length) return '<p class="panel-note">Member lengths and cut lengths show up here once you draw members.</p>';
-    var h = '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
-      '. Lengths in ' + u.len + '. ' + stocksUsed(data) + '.</p></div>';
-    h += solved ? '<p class="panel-note">Rough cut and finish length = center-to-center length plus the offset for that stock, from the lab design sheet. Click a member to change its stock.</p>'
-      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + ' Until it solves, members are listed with tension stock.</p>';
-    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length c-c (' + u.len + ')</th><th>Force (' + u.force + ')</th><th class="left">T or C</th><th class="left">Stock</th><th>Rough cut (' + u.len + ')</th><th>Finish length (' + u.len + ')</th><th class="print-only">Done</th></tr></thead><tbody>';
+    var u = U(), solved = result.status === 'ok';
+    if (!model.members.length) return '<p class="panel-note">Members show up here once you draw them.</p>';
+    var h = '<div class="print-head"><h1>' + esc(model.name) + ': members</h1><p>' + new Date().toLocaleDateString() + '. Lengths in ' + u.len + ', forces in ' + u.force + '; positive force is tension.</p></div>';
+    h += solved ? '<p class="panel-note">These columns match the lab design spreadsheet. Use <b>Export to lab spreadsheet</b> to fill it in, then pick each member\'s cross section there to see how it changes the weight and safety factor.</p>'
+      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + '</p>';
+    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>From x</th><th>From y</th><th>To x</th><th>To y</th><th>Length c-c (' + u.len + ')</th><th class="left">T or C</th><th>Force (' + u.force + ')</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
+      var a = jointById(r.m.a), b = jointById(r.m.b);
       var tcText = !r.tc ? '–' : r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero force';
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td>' +
-        '<td class="num">' + fLen(r.L) + '</td><td class="num">' + (solved ? fForceExact(Math.abs(r.F)) : '–') + '</td>' +
-        '<td class="left">' + (r.tc ? tcTag(r) + ' ' + tcText : '–') + '</td>' +
-        '<td class="left' + (r.mismatch ? ' warn-text' : '') + '">' + esc(r.stock) + '</td>' +
-        '<td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td><td class="print-only"><span class="tickbox"></span></td></tr>';
+        '<td class="num">' + fLen(a.x) + '</td><td class="num">' + fLen(a.y) + '</td><td class="num">' + fLen(b.x) + '</td><td class="num">' + fLen(b.y) + '</td>' +
+        '<td class="num">' + fLen(r.L) + '</td><td class="left">' + (r.tc ? tcTag(r) + ' ' + tcText : '–') + '</td>' +
+        '<td class="num">' + (solved ? fForceExact(r.F) : '–') + '</td></tr>';
     });
     return h + '</tbody></table>';
   }
@@ -1109,9 +1127,9 @@
         var v = readNum(el);
         if (v === null) { refresh(); return; }
         checkpoint();
-        j[id === 'jx' ? 'x' : 'y'] = round6(v);
+        j[id === 'jx' ? 'x' : 'y'] = round6(iLen(v));
       } else if (id === 'fx' || id === 'fy') {
-        var f = readNum(el) || 0;
+        var f = iF(readNum(el) || 0);
         checkpoint();
         var ld = model.loads[j.id] || { fx: 0, fy: 0 };
         ld[id] = f;
@@ -1129,7 +1147,7 @@
     } else if (ui.sel.type === 'member' && id === 'cap') {
       var m = model.members[memberIndex(ui.sel.id)], c = readNum(el);
       checkpoint();
-      if (c === null || c <= 0) delete m.cap; else m.cap = c;
+      if (c === null || c <= 0) delete m.cap; else m.cap = iF(c);
       refresh();
     }
   });
@@ -1157,6 +1175,7 @@
     var x = readNum($('#addX')), y = readNum($('#addY'));
     if (x === null || y === null) { toast('Enter both x and y.'); (x === null ? $('#addX') : $('#addY')).focus(); return; }
     checkpoint();
+    x = iLen(x); y = iLen(y);
     var id = addJoint(x, y);
     if (ui.tool === 'member' && ui.pending && ui.pending !== id) addMember(ui.pending, id);
     if (ui.tool === 'member') ui.pending = id;
@@ -1222,7 +1241,7 @@
     checkpoint();
     model = exampleModel();
     afterLoad(true);
-    toast('Loaded the lab truss example: 1000 lbf down at joint E.');
+    toast('Loaded the lab truss example: ' + fForce(1000) + ' ' + U().force + ' down at joint E.');
   }
   $('#btnExample').addEventListener('click', loadExample);
   $('#btnExample2').addEventListener('click', loadExample);
@@ -1272,23 +1291,24 @@
   $('#btnCsv').addEventListener('click', function () {
     var data = analyze.cache, u = U(), solved = result.status === 'ok';
     if (simple()) {
-      var rowsS = ['Member,From,To,Length c-c (' + u.len + '),Force (' + u.force + '),T or C,Rough cut (' + u.len + '),Finish length (' + u.len + ')'];
+      var rowsS = ['Member,From,To,From x (' + u.len + '),From y (' + u.len + '),To x (' + u.len + '),To y (' + u.len + '),Length c-c (' + u.len + '),T or C,Force (' + u.force + ', + tension)'];
       data.rows.forEach(function (r) {
-        rowsS.push([r.i + 1, labelOf(r.m.a), labelOf(r.m.b), r.L.toFixed(3), solved ? Math.abs(r.F).toFixed(2) : '',
-          solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '', r.rough.toFixed(3), r.finish.toFixed(3)].map(csvCell).join(','));
+        var ja = jointById(r.m.a), jb = jointById(r.m.b);
+        rowsS.push([r.i + 1, labelOf(r.m.a), labelOf(r.m.b), clean(dLen(ja.x)), clean(dLen(ja.y)), clean(dLen(jb.x)), clean(dLen(jb.y)), dLen(r.L).toFixed(4),
+          solved ? (r.tc === 't' ? 'T' : r.tc === 'c' ? 'C' : '0') : '', solved ? dF(r.F).toFixed(2) : ''].map(csvCell).join(','));
       });
-      download(slug() + '-cut-list.csv', rowsS.join('\n') + '\n', 'text/csv');
-      toast('Downloaded ' + slug() + '-cut-list.csv');
+      download(slug() + '-members.csv', rowsS.join('\n') + '\n', 'text/csv');
+      toast('Downloaded ' + slug() + '-members.csv');
       return;
     }
     var head = ['Member', 'From', 'To', 'Length c-c (' + u.len + ')', 'Force (' + u.force + ')', 'T or C', 'Tabs', 'Stress (' + u.stress + ')', 'Capacity (' + u.force + ')', 'Safety factor', 'Stock', 'Rough cut (' + u.len + ')', 'Finish length (' + u.len + ')', 'Weight (g)'];
     var lines = [head.join(',')];
     data.rows.forEach(function (r) {
       lines.push([
-        r.i + 1, labelOf(r.m.a), labelOf(r.m.b), r.L.toFixed(3),
-        solved ? r.F.toFixed(2) : '', solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '', r.tab,
-        solved ? r.stress.toFixed(1) : '', r.cap, solved && isFinite(r.sf) ? r.sf.toFixed(2) : '',
-        r.stock, r.rough.toFixed(3), r.finish.toFixed(3), r.weight.toFixed(1)
+        r.i + 1, labelOf(r.m.a), labelOf(r.m.b), dLen(r.L).toFixed(4),
+        solved ? dF(r.F).toFixed(2) : '', solved ? (r.tc === 't' ? 'Tension' : r.tc === 'c' ? 'Compression' : 'Zero') : '', r.tab,
+        solved ? dStress(r.stress).toFixed(1) : '', dF(r.cap).toFixed(1), solved && isFinite(r.sf) ? r.sf.toFixed(2) : '',
+        r.stock, dLen(r.rough).toFixed(4), dLen(r.finish).toFixed(4), r.weight.toFixed(1)
       ].map(csvCell).join(','));
     });
     download(slug() + '-members.csv', lines.join('\n') + '\n', 'text/csv');
@@ -1300,81 +1320,209 @@
     window.print();
   });
 
+  // ---------- lab spreadsheet export ----------
+  // Writes the E6 Lab 3 design sheet layout with the lab's own formulas, so students
+  // choose each member's cross section and tabs in Excel and watch weight and safety factor update.
+  var EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+  var SHEET_STOCK = { flat14: '1/4x1', flat18: '1/8x1', tube1: '1x1', tube34: '3/4x3/4' };
+  function loadExcelJS() {
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    return new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+      tag.src = EXCELJS_URL;
+      tag.onload = function () { resolve(window.ExcelJS); };
+      tag.onerror = reject;
+      document.head.appendChild(tag);
+    });
+  }
+  function labFormulas(r) {
+    var H = 'H' + r, F = 'F' + r, J = 'J' + r, L = 'L' + r;
+    return {
+      F: 'SQRT((B' + r + '-D' + r + ')^2 +(C' + r + '-E' + r + ')^2)',
+      I: 'IF(' + H + '="1/4x1",' + F + '+1.3,IF(' + H + '="1/8x1",' + F + '+1.3,IF(' + H + '="1x1",' + F + '-4.13,IF(' + H + '="3/4x3/4",' + F + '-3.63))))',
+      J: 'IF(' + H + '="1/4x1",' + F + '+1.25,IF(' + H + '="1/8x1",' + F + '+1.25,IF(' + H + '="1x1",' + F + '-4.25,IF(' + H + '="3/4x3/4",' + F + '-3.75))))',
+      K: 'IF(' + H + '="1/4x1",' + J + '*11.5,IF(' + H + '="1/8x1",' + J + '*5.75,IF(' + H + '="1x1",' + J + '*11.41+2*61.3,IF(' + H + '="3/4x3/4",' + J + '*7.64+2*36))))',
+      M: 'IF(' + H + '="1/4x1",3000,IF(' + H + '="1/8x1",1500,IF(AND(' + H + '="1x1",' + L + '="CEN"),3000,IF(AND(' + H + '="1x1",' + L + '="OFF"),-6*' + J + '+2140,IF(AND(' + H + '="3/4x3/4",' + L + '="CEN"),2200,IF(AND(' + H + '="3/4x3/4",' + L + '="OFF"),-14*' + J + '+1470))))))',
+      O: 'M' + r + '/ABS(N' + r + ')'
+    };
+  }
+  function exportSheet() {
+    var data = analyze.cache, solved = result.status === 'ok';
+    if (!model.members.length) { toast('Draw some members first.'); return; }
+    if (!solved) { toast('Solve the truss first: ' + result.message); return; }
+    toast('Building the spreadsheet...');
+    loadExcelJS().then(function (ExcelJS) {
+      var wb = new ExcelJS.Workbook();
+      wb.calcProperties.fullCalcOnLoad = true;
+      var ws = wb.addWorksheet('Design');
+      var yellow = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2A8' } };
+      var gray = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
+      var head1 = ['Member', 'From X', 'From y', 'To X', 'To Y', 'center-to-center', 'T or C', 'Cross Section', 'Rough Cut', 'Finish length', 'Weight', '', '', 'Force', 'Safety'];
+      var head2 = ['', 'in.', 'in.', 'in.', 'in.', 'in.', '(comp/tens)', 'in. x in.', 'in', 'in.', 'member+ends', 'Tab', 'Max Force', '(lbf)', 'Factor'];
+      ws.addRow(head1); ws.addRow(head2);
+      [1, 2].forEach(function (n) { ws.getRow(n).font = { bold: true }; });
+      var n = data.rows.length, first = 3, last = 2 + n, bracketFree = [];
+      data.rows.forEach(function (row, k) {
+        var r = first + k, a = jointById(row.m.a), b = jointById(row.m.b), f = labFormulas(r);
+        var cross = row.manualStock ? SHEET_STOCK[row.stockId] : (row.tc === 'c' ? SHEET_STOCK[model.settings.defaultStock.c] : SHEET_STOCK[model.settings.defaultStock.t]);
+        var isTube = cross === '1x1' || cross === '3/4x3/4';
+        ws.getCell('A' + r).value = k + 1;
+        ws.getCell('B' + r).value = clean(a.x); ws.getCell('C' + r).value = clean(a.y);
+        ws.getCell('D' + r).value = clean(b.x); ws.getCell('E' + r).value = clean(b.y);
+        ws.getCell('F' + r).value = { formula: f.F };
+        ws.getCell('G' + r).value = row.tc === 'c' ? 'C' : row.tc === 't' ? 'T' : '0';
+        ws.getCell('H' + r).value = cross;
+        ws.getCell('I' + r).value = { formula: f.I };
+        ws.getCell('J' + r).value = { formula: f.J };
+        ws.getCell('K' + r).value = { formula: f.K };
+        ws.getCell('L' + r).value = isTube ? (row.m.tab === 'off' ? 'OFF' : 'CEN') : ' ';
+        ws.getCell('M' + r).value = { formula: f.M };
+        ws.getCell('N' + r).value = Math.round(row.F * 100) / 100;
+        ws.getCell('O' + r).value = { formula: f.O };
+        ws.getCell('H' + r).dataValidation = { type: 'list', allowBlank: false, formulae: ['"1/4x1,1/8x1,1x1,3/4x3/4"'] };
+        ws.getCell('L' + r).dataValidation = { type: 'list', allowBlank: true, formulae: ['"CEN,OFF, "'] };
+        ['H', 'L'].forEach(function (c) { ws.getCell(c + r).fill = yellow; });
+        ['F', 'I', 'J', 'K', 'M', 'O'].forEach(function (c) { ws.getCell(c + r).fill = gray; });
+        ['F', 'I', 'J'].forEach(function (c) { ws.getCell(c + r).numFmt = '0.00'; });
+        ['K', 'M', 'N'].forEach(function (c) { ws.getCell(c + r).numFmt = '0.00'; });
+        ws.getCell('O' + r).numFmt = '0.00';
+        if (!row.excluded && row.F) bracketFree.push('O' + r);
+      });
+      var t = last + 1;
+      ws.getCell('F' + t).value = 'Number of joints'; ws.getCell('G' + t).value = model.joints.length;
+      ws.getCell('J' + t).value = 'pin hardware'; ws.getCell('K' + t).value = { formula: '(G' + t + '-2)*(50+2*3.75)' };
+      ws.getCell('J' + (t + 1)).value = 'total (gm)'; ws.getCell('K' + (t + 1)).value = { formula: 'SUM(K' + first + ':K' + t + ')' };
+      ws.getCell('J' + (t + 2)).value = 'total(lb)'; ws.getCell('K' + (t + 2)).value = { formula: 'K' + (t + 1) + '*0.00220462' };
+      ws.getCell('J' + (t + 3)).value = 'Deflection ';
+      ws.getCell('K' + (t + 3)).value = data.defl ? Math.round(data.defl.value * 10000) / 10000 : null;
+      ws.getCell('O' + (t + 3)).value = bracketFree.length ? { formula: 'MIN(' + bracketFree.join(',') + ')' } : null;
+      ws.getCell('P' + (t + 4)).value = 'Overall Safety Factor: the lowest safety factor, excluding members attached to the lower bracket at (0,0)';
+      ws.getCell('J' + (t + 5)).value = 'Predicted score';
+      ws.getCell('K' + (t + 5)).value = { formula: 'IFERROR(60/(K' + (t + 2) + '*ABS(K' + (t + 3) + '))+30*O' + (t + 3) + ',"")' };
+      ['K' + t, 'K' + (t + 1), 'K' + (t + 2), 'O' + (t + 3), 'K' + (t + 5)].forEach(function (c) { ws.getCell(c).fill = gray; ws.getCell(c).numFmt = '0.00'; });
+      ws.getCell('K' + (t + 3)).numFmt = '0.0000';
+      ws.getCell('A' + (t + 7)).value = 'Exported from Truss Lab. Coordinates are in inches and forces in lbf so the lab formulas work. Pick each member\'s Cross Section and Tab in the yellow cells; gray cells update.';
+      [8, 8, 8, 8, 8, 16, 11, 13, 10, 13, 13, 6, 11, 10, 9].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+      return wb.xlsx.writeBuffer();
+    }).then(function (buf) {
+      var name = slug() + '-design-sheet.xlsx';
+      var blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+      toast('Downloaded ' + name);
+    }).catch(function () {
+      toast('Couldn\'t build the spreadsheet. It needs an internet connection the first time; Download CSV works offline.');
+    });
+  }
+  if ($('#btnXlsx')) $('#btnXlsx').addEventListener('click', exportSheet);
+
   // ---------- settings ----------
   var dialog = $('#settingsDialog');
-  function sField(path, label, unit) {
+  // Each setting has a kind, so it shows in the chosen units and converts back when edited.
+  var KINDS = {
+    plain: [function (v) { return v; }, function (v) { return v; }],
+    len: [function (v) { return dLen(v); }, function (v) { return iLen(v); }],
+    force: [function (v) { return dF(v); }, function (v) { return iF(v); }],
+    perLen: [function (v) { return v / LEN_F[U().len]; }, function (v) { return v * LEN_F[U().len]; }],
+    forcePerLen: [function (v) { return dF(v) / LEN_F[U().len]; }, function (v) { return iF(v) * LEN_F[U().len]; }],
+    E: [function (v) { return v * E_F[U().E]; }, function (v) { return v / E_F[U().E]; }],
+    A: [function (v) { return v * A_F[U().A]; }, function (v) { return v / A_F[U().A]; }]
+  };
+  function sInput(path, kind, label) {
     var v = getPath(model.settings, path);
-    return '<label class="field">' + label + '<span class="unit"><input type="number" step="any" data-setting="' + path + '" value="' + esc(v) + '"><em>' + esc(unit || '') + '</em></span></label>';
+    return '<input type="number" step="any" data-setting="' + path + '" data-kind="' + kind + '" value="' + clean(KINDS[kind][0](v)) + '"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>';
   }
-  function sText(path, label) {
-    return '<label class="field">' + label + '<input type="text" data-setting="' + path + '" value="' + esc(getPath(model.settings, path)) + '"></label>';
+  function sField(path, label, unit, kind) {
+    return '<label class="field">' + label + '<span class="unit">' + sInput(path, kind || 'plain') + '<em>' + esc(unit || '') + '</em></span></label>';
+  }
+  function sSelect(special, label, options, current) {
+    return '<label class="field">' + label + '<select data-special="' + special + '">' + options.map(function (o) {
+      var val = Array.isArray(o) ? o[0] : o, text = Array.isArray(o) ? o[1] : o;
+      return '<option value="' + esc(val) + '"' + (String(val) === String(current) ? ' selected' : '') + '>' + esc(text) + '</option>';
+    }).join('') + '</select></label>';
   }
   function currentTheme() {
     try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (e) { return 'system'; }
   }
+  function nearestSnap(len, snapIn) {
+    var best = null;
+    SNAPS[len].forEach(function (d) { var v = d / LEN_F[len]; if (best === null || Math.abs(v - snapIn) < Math.abs(best - snapIn)) best = v; });
+    return best;
+  }
   function renderSettings() {
-    var u = U(), st = model.settings;
-    var snaps = st.units === 'metric' ? [1, 2, 5, 10, 25] : [0.05, 0.1, 0.125, 0.25, 0.5, 1];
-    var theme = currentTheme();
-    var h = '<fieldset><legend>Drawing' + (simple() ? '' : ' and material') + '</legend><div class="settings-grid">' +
-      (simple() ? '' : sField('E', 'Elastic modulus E', u.E) + sField('A', 'Cross-section area A', u.A)) +
-      '<label class="field">Grid snap<select data-special="snap">' + snaps.map(function (s) { return '<option value="' + s + '"' + (Math.abs(s - st.snap) < 1e-9 ? ' selected' : '') + '>' + s + ' ' + u.len + '</option>'; }).join('') + '</select></label>' +
-      '</div>' + (simple() ? '' : '<p class="hint">The lab says to use A = 0.25 in² and E = 69 GPa (10,000,000 psi) for every member. E and A only change the predicted deflection, unless the truss is statically indeterminate.</p>') + '</fieldset>';
-    var cols = simple() ? [['rough', 'Rough cut', u.len], ['finish', 'Finish', u.len]]
-      : [['rough', 'Rough cut', u.len], ['finish', 'Finish', u.len], ['perIn', 'Weight', 'g/in'], ['ends', 'Ends', 'g'], ['cap', 'Capacity', u.force], ['offA', 'Offset base', u.force], ['offB', 'Offset per in', u.force]];
-    h += '<fieldset><legend>Stock</legend><p class="hint">From the E6 Lab 3 design sheet. Rough cut and finish length = center-to-center length + offset' +
-      (simple() ? '.' : '; weight = per-inch weight x finish length + end fittings; offset-tab capacity = base - per in x finish length.') + '</p>' +
-      '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th class="left">Stock</th><th class="left">Used for</th>' +
-      cols.map(function (c) { return '<th>' + c[1] + ' <em>' + esc(c[2]) + '</em></th>'; }).join('') + '</tr></thead><tbody>';
-    STOCK_IDS.forEach(function (id) {
-      var sk = st.stocks[id];
-      h += '<tr><td class="left">' + esc(sk.name) + '</td><td class="left">' + (sk.kind === 't' ? 'Tension' : 'Compression') + '</td>' +
-        cols.map(function (c) {
-          if (sk[c[0]] === undefined) return '<td>–</td>';
-          return '<td><input type="number" step="any" data-setting="stocks.' + id + '.' + c[0] + '" value="' + esc(sk[c[0]]) + '" aria-label="' + esc(sk.name + ' ' + c[1]) + '"></td>';
-        }).join('') + '</tr>';
-    });
-    h += '</tbody></table></div><div class="settings-grid">' +
-      '<label class="field">Default tension stock<select data-special="defT">' + STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 't'; }).map(function (id) { return '<option value="' + id + '"' + (st.defaultStock.t === id ? ' selected' : '') + '>' + esc(st.stocks[id].name) + '</option>'; }).join('') + '</select></label>' +
-      '<label class="field">Default compression stock<select data-special="defC">' + STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 'c'; }).map(function (id) { return '<option value="' + id + '"' + (st.defaultStock.c === id ? ' selected' : '') + '>' + esc(st.stocks[id].name) + '</option>'; }).join('') + '</select></label>' +
-      (simple() ? '' : sField('pin.perJoint', 'Pin hardware per joint', 'g')) +
-      '</div>' + (simple() ? '' : '<p class="hint">Pin hardware = (joints - 2) x per joint. The two support joints use the test fixture\'s pins.</p>') + '</fieldset>';
+    var u = U(), st = model.settings, theme = currentTheme();
+    var snapOpts = SNAPS[u.len].map(function (d) { return [d / LEN_F[u.len], d + ' ' + u.len]; });
+    var curSnap = snapOpts.filter(function (o) { return Math.abs(o[0] - st.snap) < 1e-9; })[0];
+    var h = '<fieldset><legend>Units</legend><p class="hint">Each quantity has its own unit, so mixed units work, like the lab\'s A = 0.25 in² with E = 69 GPa. Values are converted, never re-entered.</p><div class="settings-grid">' +
+      sSelect('unit-len', 'Length', Object.keys(LEN_F), u.len) +
+      sSelect('unit-force', 'Force', Object.keys(FORCE_F), u.force) +
+      (simple() ? '' : sSelect('unit-E', 'Elastic modulus', Object.keys(E_F), u.E) + sSelect('unit-A', 'Area', Object.keys(A_F), u.A)) +
+      sSelect('snap', 'Grid snap', snapOpts, curSnap ? curSnap[0] : '') +
+      '</div></fieldset>';
+    if (!simple()) {
+      h += '<fieldset><legend>Material</legend><div class="settings-grid">' +
+        sField('E', 'Elastic modulus E', u.E, 'E') + sField('A', 'Cross-section area A', u.A, 'A') +
+        '</div><p class="hint">The lab uses A = 0.25 in² and E = 69 GPa for every member. E and A only change the predicted deflection, unless the truss is statically indeterminate.</p></fieldset>';
+      var cols = [['rough', 'Rough cut', u.len, 'len'], ['finish', 'Finish', u.len, 'len'], ['perIn', 'Weight', 'g/' + u.len, 'perLen'], ['ends', 'Ends', 'g', 'plain'],
+        ['cap', 'Capacity', u.force, 'force'], ['offA', 'Offset base', u.force, 'force'], ['offB', 'Offset per ' + u.len, u.force, 'forcePerLen']];
+      h += '<fieldset><legend>Stock</legend><p class="hint">From the E6 Lab 3 design sheet. Rough cut and finish length = center-to-center length + offset; weight = weight per length x finish length + end fittings; offset-tab capacity = base - per length x finish length.</p>' +
+        '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th class="left">Stock</th><th class="left">Used for</th>' +
+        cols.map(function (c) { return '<th>' + c[1] + ' <em>' + esc(c[2]) + '</em></th>'; }).join('') + '</tr></thead><tbody>';
+      STOCK_IDS.forEach(function (id) {
+        var sk = st.stocks[id];
+        h += '<tr><td class="left">' + esc(sk.name) + '</td><td class="left">' + (sk.kind === 't' ? 'Tension' : 'Compression') + '</td>' +
+          cols.map(function (c) { return sk[c[0]] === undefined ? '<td>–</td>' : '<td>' + sInput('stocks.' + id + '.' + c[0], c[3], sk.name + ' ' + c[1]) + '</td>'; }).join('') + '</tr>';
+      });
+      h += '</tbody></table></div><div class="settings-grid">' +
+        sSelect('defT', 'Default tension stock', STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 't'; }).map(function (id) { return [id, st.stocks[id].name]; }), st.defaultStock.t) +
+        sSelect('defC', 'Default compression stock', STOCK_IDS.filter(function (id) { return st.stocks[id].kind === 'c'; }).map(function (id) { return [id, st.stocks[id].name]; }), st.defaultStock.c) +
+        sField('pin.perJoint', 'Pin hardware per joint', 'g', 'plain') +
+        '</div><p class="hint">Pin hardware = (joints - 2) x per joint. The two support joints use the test fixture\'s pins.</p></fieldset>';
+    }
     h += '<fieldset><legend>Checks</legend><label class="check"><input type="checkbox" data-special="rules"' + (st.rules ? ' checked' : '') + '> Check the E6 lab design rules (member lengths, angles, load point, supports)</label></fieldset>';
-    h += '<fieldset><legend>Appearance</legend><div class="settings-grid"><label class="field">Theme<select data-special="theme">' +
-      ['system', 'light', 'dark'].map(function (t) { return '<option value="' + t + '"' + (t === theme ? ' selected' : '') + '>' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>'; }).join('') +
-      '</select></label></div></fieldset>';
+    h += '<fieldset><legend>Appearance</legend><div class="settings-grid">' +
+      sSelect('theme', 'Theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], theme) + '</div></fieldset>';
     $('#settingsBody').innerHTML = h;
   }
   $('#btnSettings').addEventListener('click', function () { renderSettings(); dialog.showModal(); });
   $('#settingsBody').addEventListener('change', function (e) {
-    var el = e.target;
+    var el = e.target, sp = el.dataset.special;
     if (el.dataset.setting) {
-      var path = el.dataset.setting, isText = el.type === 'text';
-      var v = isText ? el.value.trim() : readNum(el);
-      if (v === null || v === '') { renderSettings(); return; }
+      var v = readNum(el);
+      if (v === null) { renderSettings(); return; }
       checkpoint();
-      setPath(model.settings, path, v);
+      setPath(model.settings, el.dataset.setting, KINDS[el.dataset.kind || 'plain'][1](v));
       refresh();
-    } else if (el.dataset.special === 'defT' || el.dataset.special === 'defC') {
+    } else if (sp && sp.indexOf('unit-') === 0) {
+      var key = sp.slice(5);
+      model.settings.units[key] = el.value;
+      if (key === 'len') model.settings.snap = nearestSnap(el.value, model.settings.snap);
+      refresh();
+      renderSettings();
+    } else if (sp === 'defT' || sp === 'defC') {
       checkpoint();
-      model.settings.defaultStock[el.dataset.special === 'defT' ? 't' : 'c'] = el.value;
+      model.settings.defaultStock[sp === 'defT' ? 't' : 'c'] = el.value;
       refresh();
-    } else if (el.dataset.special === 'rules') {
+    } else if (sp === 'rules') {
       checkpoint();
       model.settings.rules = el.checked;
       refresh();
-    } else if (el.dataset.special === 'snap') {
-      checkpoint();
+    } else if (sp === 'snap') {
       model.settings.snap = Number(el.value);
       refresh();
-    } else if (el.dataset.special === 'theme') {
+    } else if (sp === 'theme') {
       try { localStorage.setItem(THEME_KEY, el.value); } catch (err) { /* ignore */ }
       applyTheme();
     }
   });
   $('#btnResetSettings').addEventListener('click', function () {
     checkpoint();
+    var units = model.settings.units;
     model.settings = defaultSettings();
+    model.settings.units = units;
+    model.settings.snap = nearestSnap(units.len, model.settings.snap);
     refresh();
     renderSettings();
     toast('Lab settings reset to the defaults.');

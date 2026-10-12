@@ -325,7 +325,7 @@ button, input, select { font: inherit; color: inherit; }
 .mode-switch button { padding: 5px 12px; font-size: 13px; }
 .simple-title { display: none; margin: 0; padding: 12px 0 10px; font: 600 14px/1 var(--f-display); }
 .mode-simple .simple-title { display: block; }
-.mode-simple .tabs [role="tab"], .mode-simple .summary { display: none; }
+.mode-simple .tabs [role="tab"], .mode-simple .summary, .mode-simple #btnPrint { display: none; }
 
 /* ---------- results ---------- */
 .results { background: var(--sheet); }

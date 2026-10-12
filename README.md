@@ -4,7 +4,9 @@ A 2D truss calculator for the engineering mechanics truss lab. Draw the truss (o
 
 Open `index.html` in a browser. No install or build step.
 
-The switch in the top bar picks how much to show. **Simple** shows only what you need to machine the pieces: member lengths, tension or compression, and rough cut and finish lengths. **Detailed** adds safety factors, end tabs, weight, reactions, displacements and the drawn-to-scale cut list.
+The switch in the top bar picks how much to show. **Simple** is the course version: draw the truss, see the member forces and tension or compression, then **Export to lab spreadsheet** to get the E6 Lab 3 design sheet filled in, with the lab's formulas and dropdowns for each member's cross section and tabs. **Detailed** adds stock selection, safety factors, end tabs, weight, the predicted score and the drawn-to-scale cut list.
+
+Units are set per quantity (length, force, elastic modulus, area), so mixed units like A = 0.25 in² with E = 69 GPa work. Values are stored internally in inches and lbf.
 
 ## What it does
 
@@ -23,7 +25,7 @@ The switch in the top bar picks how much to show. **Simple** shows only what you
 - Total weight (pin hardware = (joints - 2) x 57.5 g) and the predicted lab score: 60 / (weight in lb x deflection) + 30 x safety factor.
 - Checks the E6 lab design rules: supports at (0, 0) and (0, 12), no member between them, member lengths 2 to 15.3 in, at most 5 members and 3 compression members at a joint, at least 30° between members, nothing more than 1 in below the bottom support, load at (30, 18) as the highest point, no right angle at the load point.
 - Cut list with every piece drawn to scale. Prints as a shop sheet with a box to tick off each piece.
-- Save and open `.truss.json` files, CSV export, undo and redo.
+- Export to the lab design spreadsheet (.xlsx, built with ExcelJS from cdnjs on first use), CSV export, save and open `.truss.json` files, undo and redo.
 
 All lab constants are editable under **Lab settings**.
 
