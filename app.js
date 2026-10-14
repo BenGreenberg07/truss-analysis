@@ -732,9 +732,15 @@
     inspector.innerHTML = html;
     if (focusId && document.getElementById(focusId)) document.getElementById(focusId).focus();
     if (ui.focusLoad && document.getElementById('fy')) {
-      document.getElementById('fy').focus();
-      document.getElementById('fy').select();
       ui.focusLoad = false;
+      // wait until the click that picked the joint is done, or the browser moves focus back to the canvas
+      setTimeout(function () {
+        var fy = document.getElementById('fy');
+        if (!fy) return;
+        fy.scrollIntoView({ block: 'nearest' });
+        fy.focus({ preventScroll: true });
+        fy.select();
+      }, 0);
     }
   }
   function checks(data) {
