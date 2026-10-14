@@ -188,6 +188,7 @@ button, input, select { font: inherit; color: inherit; }
 .joint-hit { fill: transparent; cursor: pointer; }
 .joint-sel { fill: var(--select); opacity: .9; }
 .joint-hover { fill: var(--select); opacity: .4; }
+.joint-loose { fill: none; stroke: var(--danger); stroke-width: 2.5; }
 .joint-pending { fill: none; stroke: var(--tension); stroke-width: 2; stroke-dasharray: 3 3; }
 .joint-label { font: 600 13px var(--f-display); fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
 

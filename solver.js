@@ -94,6 +94,8 @@
       if (Math.abs(M[piv][col]) < tol) {
         res.status = 'unstable';
         res.message = 'The truss is a mechanism: it can move without stretching any member. Add a member or a support.';
+        // the column with no pivot is a free direction of motion, so its joint is part of the mechanism
+        res.mechanismJoint = joints[Math.floor(free[col] / 2)].id;
         return res;
       }
       if (piv !== col) {

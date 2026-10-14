@@ -584,6 +584,8 @@
       if (isSel) out.push('<circle class="joint-sel" cx="' + p[0] + '" cy="' + p[1] + '" r="11"/>');
       else if (isHover) out.push('<circle class="joint-hover" cx="' + p[0] + '" cy="' + p[1] + '" r="10"/>');
       if (ui.pending === j.id) out.push('<circle class="joint-pending" cx="' + p[0] + '" cy="' + p[1] + '" r="13"/>');
+      var loose = result && result.status === 'unstable' && result.mechanismJoint === j.id;
+      if (loose) out.push('<circle class="joint-loose" cx="' + p[0] + '" cy="' + p[1] + '" r="12"/>');
       out.push('<circle class="joint-dot" cx="' + p[0] + '" cy="' + p[1] + '" r="5"/>');
       // put the label on the side away from the members
       var vx = 0, vy = 0;
@@ -643,7 +645,13 @@
       var d = data.determinacy;
       msg = 'Solved. ' + (d === 0 ? 'Statically determinate.' : d > 0 ? 'Statically indeterminate (degree ' + d + '), so forces depend on member stiffness.' : 'Check the supports: m + r is less than 2j.');
       if (!Object.keys(model.loads).length) msg = 'Solved, but there are no loads yet. Use the Load tool.';
-    } else { msg = result.message; cls += ' warn'; }
+    } else {
+      msg = result.message;
+      if (result.mechanismJoint != null && jointIndex(result.mechanismJoint) >= 0) {
+        msg = 'The truss is a mechanism: joint ' + labelOf(result.mechanismJoint) + ' (in red) can move without stretching any member. Brace it with another member, or check for a loop with too few diagonals.';
+      }
+      cls += ' warn';
+    }
     status.className = cls;
     status.textContent = msg;
     if (document.activeElement !== $('#projectName')) $('#projectName').value = model.name;
@@ -756,7 +764,11 @@
     add(r >= 3, r >= 3 ? 'Supports are in place' : 'Needs supports with at least 3 reaction components');
     var loaded = Object.keys(model.loads);
     add(loaded.length > 0, loaded.length ? 'Loaded at joint ' + loaded.map(function (id) { return labelOf(Number(id)); }).join(', ') : 'No loads yet');
-    if (result.status === 'unstable' || result.status === 'error') add(false, esc(result.message));
+    if (result.status === 'unstable' || result.status === 'error') {
+      add(false, result.mechanismJoint != null && jointIndex(result.mechanismJoint) >= 0
+        ? 'Joint ' + labelOf(result.mechanismJoint) + ' can move freely (mechanism). Add a member to brace it.'
+        : esc(result.message));
+    }
     if (data.rules && data.rules.length) {
       items.push('<li class="check-head">E6 lab rules</li>');
       data.rules.forEach(function (r) { add(r.ok, esc(r.text)); });
