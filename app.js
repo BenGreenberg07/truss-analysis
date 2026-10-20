@@ -63,7 +63,7 @@
   var model = emptyModel();
   var result = null;
   var undoStack = [], redoStack = [];
-  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', cursor: null, focusLoad: false,
+  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', simpleView: 'members', cursor: null, focusLoad: false,
     // Detailed mode is hidden from students; add ?detailed to the address to open it
     mode: /[?&]detailed\b/.test(location.search) ? 'full' : 'simple' };
   function simple() { return ui.mode === 'simple'; }
@@ -865,6 +865,7 @@
     h += '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
       '. Lengths in ' + u.len + '. ' + stocksUsed(data) + '.</p></div>';
     if (!solved) h += '<p class="panel-note">The truss isn\'t solved yet, so members without a chosen stock are listed as ' + esc(st.stocks[st.defaultStock.t].name) + '. ' + esc(result.message || '') + '</p>';
+    else if (simple()) h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offset for each stock, from the lab design sheet. This list uses ' + esc(st.stocks[st.defaultStock.t].name) + ' for tension members and ' + esc(st.stocks[st.defaultStock.c].name) + ' for compression members. If you choose other cross sections in the lab spreadsheet, use the cut lengths from the spreadsheet.</p>';
     else h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offset for each stock, from the lab design sheet. Members use ' + esc(st.stocks[st.defaultStock.t].name) + ' in tension and ' + esc(st.stocks[st.defaultStock.c].name) + ' in compression unless you pick a stock for them.</p>';
     h += '<div class="cut-legend"><span><i class="sw finish"></i>Finish length</span><span><i class="sw rough"></i>Extra for the rough cut</span><span><i class="sw cc"></i>Center-to-center length</span></div>';
 
@@ -927,7 +928,12 @@
 
   function renderResults(data) {
     if (simple()) {
-      $('#panel').innerHTML = renderSimple(data);
+      var cut = ui.simpleView === 'cut';
+      document.body.classList.toggle('simple-cut', cut);
+      $('.simple-title').textContent = cut ? 'Cut list' : 'Members';
+      $('#btnCutList').textContent = cut ? 'Back to members' : 'Cut list';
+      $('#btnCutList').setAttribute('aria-pressed', String(cut));
+      $('#panel').innerHTML = cut ? renderCut(data) : renderSimple(data);
       return;
     }
     renderSummary(data);
@@ -1333,8 +1339,13 @@
     download(slug() + '-members.csv', lines.join('\n') + '\n', 'text/csv');
     toast('Downloaded ' + slug() + '-members.csv');
   });
+  $('#btnCutList').addEventListener('click', function () {
+    ui.simpleView = ui.simpleView === 'cut' ? 'members' : 'cut';
+    refresh();
+  });
   $('#btnPrint').addEventListener('click', function () {
     ui.tab = 'cut';
+    ui.simpleView = 'cut';
     refresh();
     window.print();
   });
