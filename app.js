@@ -43,6 +43,17 @@
     return { name: 'Untitled truss', joints: [], members: [], supports: {}, loads: {}, bracket: {}, nextId: 1, settings: defaultSettings() };
   }
 
+  // The E6 Lab 3 test fixture: supports 12 in apart on the left, 1,000 lb load at (30, 18).
+  function testSetupModel() {
+    var m = emptyModel();
+    m.name = 'New truss';
+    [[0, 0], [0, 12], [30, 18]].forEach(function (p) { m.joints.push({ id: m.nextId++, x: p[0], y: p[1] }); });
+    m.supports[1] = 'pin';
+    m.supports[2] = 'pin';
+    m.loads[3] = { fx: 0, fy: -1000 };
+    return m;
+  }
+
   function exampleModel() {
     var m = emptyModel();
     m.name = 'Lab truss example';
@@ -94,7 +105,8 @@
   function clean(v) { return Number(Number(v).toPrecision(10)); }
   function fDisp(v) { return num(dLen(v), dispDigits()); }
   function fStress(v) { return num(dStress(v), U().stress === 'psi' ? 0 : 1); }
-  function pt(x, y) { return '(' + fLen(x) + ', ' + fLen(y) + ')'; }
+  function fShort(v) { return String(Number(dLen(v).toFixed(lenDigits()))); }
+  function pt(x, y) { return '(' + fShort(x) + ', ' + fShort(y) + ')'; }
   function num(v, d) {
     if (v === null || v === undefined || !isFinite(v)) return '–';
     return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -313,7 +325,36 @@
       s.score = 60 / ((s.weight / 453.592) * Math.abs(s.defl.value)) + 30 * s.minSF.sf;
     }
     s.rules = st.rules ? ruleChecks(rows, ok) : [];
+    s.stab = stability(s);
     return s;
+  }
+
+  // One plain-language status used everywhere (canvas, side panel, tables), so the messages agree.
+  function stability(s) {
+    var j = model.joints.length, m = model.members.length, r = result.counts.r;
+    var loose = model.joints.filter(function (jt) { return !model.members.some(function (mb) { return mb.a === jt.id || mb.b === jt.id; }); });
+    var names = function (list) { return list.map(function (jt) { return labelOf(jt.id); }).join(', '); };
+    s.flagJoints = [];
+    if (!j) return { level: 'idle', text: '' };
+    if (!m) return { level: 'idle', text: 'Connect the joints with members: pick the Member tool (M), then click one joint and the next.' };
+    if (r < 3) return { level: 'warn', text: 'Add supports: the lab truss is pinned at (0, 0) and (0, 12).' };
+    if (loose.length) {
+      s.flagJoints = loose.map(function (jt) { return jt.id; });
+      return { level: 'warn', text: 'Not finished: joint ' + names(loose) + (loose.length > 1 ? ' are' : ' is') + ' not connected to any member yet (circled in red).' };
+    }
+    var short = 2 * j - (m + r);
+    if (short > 0) {
+      if (result.mechanismJoint != null) s.flagJoints = [result.mechanismJoint];
+      return { level: 'warn', text: 'Not stable yet: add at least ' + short + ' more member' + (short > 1 ? 's' : '') + '. A stable truss needs members + support reactions to be at least 2 x joints (now ' + m + ' + ' + r + ' = ' + (m + r) + ', and 2 x ' + j + ' = ' + 2 * j + ').' };
+    }
+    if (result.status === 'unstable' && result.mechanismJoint != null) {
+      s.flagJoints = [result.mechanismJoint];
+      return { level: 'warn', text: 'Not stable yet: joint ' + labelOf(result.mechanismJoint) + ' (circled in red) can still move without stretching any member. Add a member that braces it, usually a diagonal across a four-sided shape.' };
+    }
+    if (result.status !== 'ok') return { level: 'warn', text: result.message };
+    if (!Object.keys(model.loads).length) return { level: 'ok', text: 'Solved, but there is no load yet. Use the Load tool (L) on the load point.' };
+    if (s.determinacy > 0) return { level: 'ok', text: 'Solved. The truss has ' + s.determinacy + ' more member' + (s.determinacy > 1 ? 's' : '') + ' than it needs to be stable, so its forces also depend on member stiffness.' };
+    return { level: 'ok', text: 'Solved. Statically determinate.' };
   }
 
   // The lab's mounting bracket is the joint at (0, 0); members there are left out of the overall safety factor.
@@ -335,10 +376,10 @@
     if (lower && upper) add(!hasMember(lower.id, upper.id), 'No member between the supports');
 
     var bad = rows.filter(function (r) { return r.L < 2 - 1e-9 || r.L > 15.3 + 1e-9; });
-    add(!bad.length, 'Member lengths ' + fLen(2) + ' to ' + fLen(15.3) + ' ' + U().len + (bad.length ? ': member ' + bad.map(function (r) { return r.i + 1; }).join(', ') : ''));
+    add(!bad.length, 'Member lengths ' + fShort(2) + ' to ' + fShort(15.3) + ' ' + U().len + (bad.length ? ': member ' + bad.map(function (r) { return r.i + 1; }).join(', ') : ''));
 
     var lowJ = joints.filter(function (j) { return j.y < -1 - 1e-9; });
-    add(!lowJ.length, 'Nothing more than ' + fLen(1) + ' ' + U().len + ' below the bottom support' + (lowJ.length ? ': joint ' + lowJ.map(function (j) { return labelOf(j.id); }).join(', ') : ''));
+    add(!lowJ.length, 'Nothing more than ' + fShort(1) + ' ' + U().len + ' below the bottom support' + (lowJ.length ? ': joint ' + lowJ.map(function (j) { return labelOf(j.id); }).join(', ') : ''));
 
     var crowded = [], compCrowded = [], tight = [];
     joints.forEach(function (j) {
@@ -373,7 +414,7 @@
       add(!rightAngle, 'No right angle at the load point');
     }
     var mism = rows.filter(function (r) { return r.mismatch; });
-    if (ok) add(!mism.length, 'Stock matches tension or compression' + (mism.length ? ': member ' + mism.map(function (r) { return r.i + 1; }).join(', ') : ''));
+    if (ok && !simple()) add(!mism.length, 'Stock matches tension or compression' + (mism.length ? ': member ' + mism.map(function (r) { return r.i + 1; }).join(', ') : ''));
     return out;
   }
 
@@ -585,7 +626,7 @@
       if (isSel) out.push('<circle class="joint-sel" cx="' + p[0] + '" cy="' + p[1] + '" r="11"/>');
       else if (isHover) out.push('<circle class="joint-hover" cx="' + p[0] + '" cy="' + p[1] + '" r="10"/>');
       if (ui.pending === j.id) out.push('<circle class="joint-pending" cx="' + p[0] + '" cy="' + p[1] + '" r="13"/>');
-      var loose = result && result.status === 'unstable' && result.mechanismJoint === j.id;
+      var loose = data.flagJoints && data.flagJoints.indexOf(j.id) >= 0;
       if (loose) out.push('<circle class="joint-loose" cx="' + p[0] + '" cy="' + p[1] + '" r="12"/>');
       out.push('<circle class="joint-dot" cx="' + p[0] + '" cy="' + p[1] + '" r="5"/>');
       // put the label on the side away from the members
@@ -640,21 +681,16 @@
       : ui.tool === 'select' && model.members.length ? '' : HINTS[ui.tool];
     $('#emptyState').hidden = model.joints.length > 0;
 
-    var status = $('#canvasStatus'), msg = '', cls = 'canvas-status';
-    if (result.status === 'empty') msg = model.joints.length ? 'Connect the joints with members to solve.' : '';
-    else if (result.status === 'ok') {
-      var d = data.determinacy;
-      msg = 'Solved. ' + (d === 0 ? 'Statically determinate.' : d > 0 ? 'Statically indeterminate (degree ' + d + '), so forces depend on member stiffness.' : 'Check the supports: m + r is less than 2j.');
-      if (!Object.keys(model.loads).length) msg = 'Solved, but there are no loads yet. Use the Load tool.';
-    } else {
-      msg = result.message;
-      if (result.mechanismJoint != null && jointIndex(result.mechanismJoint) >= 0) {
-        msg = 'The truss is a mechanism: joint ' + labelOf(result.mechanismJoint) + ' (in red) can move without stretching any member. Brace it with another member, or check for a loop with too few diagonals.';
-      }
-      cls += ' warn';
+    // the top-left box is the one place problems are reported: stability first, then lab rules
+    var status = $('#canvasStatus'), text = data.stab.text, warn = data.stab.level === 'warn';
+    var broken = (data.rules || []).filter(function (r) { return !r.ok; });
+    if (!warn && broken.length && result.status === 'ok') {
+      warn = true;
+      text = 'Solved, but it breaks a lab rule: ' + broken[0].text.charAt(0).toLowerCase() + broken[0].text.slice(1) + '.' +
+        (broken.length > 1 ? ' ' + (broken.length - 1) + ' more in the Checks list.' : '');
     }
-    status.className = cls;
-    status.textContent = msg;
+    status.className = 'canvas-status' + (warn ? ' warn' : '');
+    status.textContent = text;
     if (document.activeElement !== $('#projectName')) $('#projectName').value = model.name;
   }
 
@@ -730,6 +766,7 @@
         '<button type="button" class="btn small" data-action="add-joint">Add</button></div>' +
         '<p class="panel-note" style="margin-top:6px">With the Member tool active, each new joint connects to the previous one.</p></div>';
       html += '<div class="insp-section"><h3>Checks</h3><ul class="check-list">' + checks(data) + '</ul></div>';
+      html += '<div class="insp-section"><h3>Material</h3><p class="panel-note" style="margin:0">Members are aluminum 6061, E = 69 GPa (10,000 ksi). The analysis uses A = 0.25 in² for every member, as the lab instructs. E and A only change the deflection, not the member forces.</p></div>';
       if (!simple()) html += '<div class="insp-section"><h3>Keys</h3><ul class="shortcuts">' +
         '<li><kbd>V</kbd><kbd>J</kbd><kbd>M</kbd><kbd>S</kbd><kbd>L</kbd> switch tools</li>' +
         '<li><kbd>Del</kbd> delete the selection</li>' +
@@ -755,21 +792,11 @@
   function checks(data) {
     var j = model.joints.length, m = model.members.length, r = result.counts.r, items = [];
     function add(ok, text) { items.push('<li' + (ok ? '' : ' class="bad"') + '>' + text + '</li>'); }
-    add(true, j + ' joints, ' + m + ' members, ' + r + ' reaction components');
-    var loose = model.joints.filter(function (jt) { return !model.members.some(function (mb) { return mb.a === jt.id || mb.b === jt.id; }); });
-    if (loose.length) add(false, 'Not connected: joint ' + loose.map(function (jt) { return labelOf(jt.id); }).join(', '));
-    if (j) {
-      var d = data.determinacy;
-      add(d >= 0, 'm + r = ' + (m + r) + ', 2j = ' + 2 * j + (d === 0 ? ' (determinate)' : d > 0 ? ' (indeterminate by ' + d + ')' : ' (' + (-d) + ' short)'));
-    }
-    add(r >= 3, r >= 3 ? 'Supports are in place' : 'Needs supports with at least 3 reaction components');
+    add(true, j + ' joints, ' + m + ' members');
+    add(r >= 3, r >= 3 ? 'Supports are in place' : 'Needs supports at (0, 0) and (0, 12)');
     var loaded = Object.keys(model.loads);
-    add(loaded.length > 0, loaded.length ? 'Loaded at joint ' + loaded.map(function (id) { return labelOf(Number(id)); }).join(', ') : 'No loads yet');
-    if (result.status === 'unstable' || result.status === 'error') {
-      add(false, result.mechanismJoint != null && jointIndex(result.mechanismJoint) >= 0
-        ? 'Joint ' + labelOf(result.mechanismJoint) + ' can move freely (mechanism). Add a member to brace it.'
-        : esc(result.message));
-    }
+    add(loaded.length > 0, loaded.length ? 'Loaded at joint ' + loaded.map(function (id) { return labelOf(Number(id)); }).join(', ') : 'No load yet');
+    if (m && r >= 3 && result.status === 'ok') add(true, 'Stable');
     if (data.rules && data.rules.length) {
       items.push('<li class="check-head">E6 lab rules</li>');
       data.rules.forEach(function (r) { add(r.ok, esc(r.text)); });
@@ -807,7 +834,7 @@
     var u = U(), solved = result.status === 'ok';
     if (!model.members.length) return '<p class="panel-note">Member forces show up here once you draw members.</p>';
     var h = solved ? '<p class="panel-note">Positive is tension (pulling on the joints), negative is compression. Safety factor is capacity divided by the force. Members at a mounting bracket are greyed out of the overall safety factor.</p>'
-      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + '</p>';
+      : '<p class="panel-note">Forces appear once the truss is stable. The box at the top left of the drawing says what to fix.</p>';
     h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>Length (' + u.len + ')</th><th>Force (' + u.force + ')</th><th>T / C</th><th class="left">Tabs</th><th>Stress (' + u.stress + ')</th><th>Capacity (' + u.force + ')</th><th>Safety factor</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
       var sfCls = '';
@@ -829,66 +856,56 @@
     return h;
   }
 
-  function stocksUsed(data) {
-    var st = model.settings, seen = {};
-    data.rows.forEach(function (r) { seen[r.stockId] = true; });
-    return STOCK_IDS.filter(function (id) { return seen[id]; }).map(function (id) {
-      var sk = st.stocks[id];
-      return esc(sk.name) + ': rough = c-c ' + sign(sk.rough) + ', finish = c-c ' + sign(sk.finish);
-    }).join('. ');
-  }
-  function sign(v) { return (v >= 0 ? '+ ' : '- ') + fLen(Math.abs(v)); }
-  function ruleSvg(r, span, minorStep, majorStep) {
-    var W = 1000, x = function (v) { return Math.max(0, v) / span * W; };
-    var s = '<svg class="rule" viewBox="0 0 ' + W + ' 26" preserveAspectRatio="none" aria-hidden="true">';
-    for (var t = 0; t <= span + 1e-9; t += minorStep) {
-      var major = Math.abs(t / majorStep - Math.round(t / majorStep)) < 1e-6;
-      s += '<line class="tick' + (major ? ' major' : '') + '" x1="' + x(t) + '" x2="' + x(t) + '" y1="' + (major ? 18 : 21) + '" y2="26"/>';
-    }
-    var fin = dLen(r.finish), rgh = dLen(r.rough), cc = dLen(r.L);
-    var lo = Math.min(fin, rgh), hi = Math.max(fin, rgh);
-    s += '<rect class="finish ' + (r.tc || 't') + '" x="0" y="4" width="' + x(fin) + '" height="12"/>';
-    if (hi - lo > 1e-9) s += '<rect class="rough" x="' + x(lo) + '" y="4" width="' + (x(hi) - x(lo)) + '" height="12"/>';
-    s += '<line class="cc" x1="' + x(cc) + '" x2="' + x(cc) + '" y1="0" y2="20"/>';
-    return s + '</svg>';
+  // A small drawing of the truss with member numbers, so the shop can match pieces to the design.
+  function trussFigure(data) {
+    var js = model.joints;
+    if (!js.length) return '';
+    var W = 900, H = 340, pad = 46;
+    var xs = js.map(function (j) { return j.x; }), ys = js.map(function (j) { return j.y; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    var s = Math.min((W - 2 * pad) / Math.max(x1 - x0, 1e-6), (H - 2 * pad) / Math.max(y1 - y0, 1e-6));
+    var ox = (W - (x1 - x0) * s) / 2, oy = (H - (y1 - y0) * s) / 2;
+    var P = function (j) { return [ox + (j.x - x0) * s, H - oy - (j.y - y0) * s]; };
+    var color = { t: '#1D5FD1', c: '#C2185B', z: '#8A968F' };
+    var out = '<svg class="cut-figure" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Truss with member numbers"><rect width="' + W + '" height="' + H + '" fill="#fff"/>';
+    var labels = '';
+    model.members.forEach(function (m, i) {
+      var a = P(jointById(m.a)), b = P(jointById(m.b)), r = data.rows[i];
+      out += '<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '" stroke="' + (color[r.tc] || '#17201C') + '" stroke-width="3" stroke-linecap="round"/>';
+      var cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2, t = String(i + 1), w = t.length * 8 + 10;
+      labels += '<rect x="' + (cx - w / 2) + '" y="' + (cy - 9) + '" width="' + w + '" height="18" rx="2" fill="#fff" stroke="' + (color[r.tc] || '#17201C') + '"/>' +
+        '<text x="' + cx + '" y="' + (cy + 4.5) + '" text-anchor="middle" font-size="12" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#17201C">' + t + '</text>';
+    });
+    js.forEach(function (j, idx) {
+      var p = P(j);
+      if (model.supports[j.id]) out += '<path d="M' + p[0] + ' ' + p[1] + ' l-9 14 h18 z" fill="#fff" stroke="#17201C" stroke-width="1.5"/>';
+      var ld = model.loads[j.id];
+      if (ld && (ld.fx || ld.fy)) out += '<line x1="' + p[0] + '" y1="' + (p[1] - 40) + '" x2="' + p[0] + '" y2="' + (p[1] - 10) + '" stroke="#17201C" stroke-width="2"/><path d="M' + p[0] + ' ' + (p[1] - 6) + ' l-5 -9 h10 z" fill="#17201C"/>';
+      out += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="4.5" fill="#fff" stroke="#17201C" stroke-width="1.8"/>' +
+        '<text x="' + (p[0] - 9) + '" y="' + (p[1] - 8) + '" text-anchor="end" font-size="13" font-weight="600" font-family="system-ui, sans-serif" fill="#17201C">' + jointLabel(idx) + '</text>';
+    });
+    return out + labels + '</svg>';
   }
   function renderCut(data) {
     var u = U(), st = model.settings, solved = result.status === 'ok';
     if (!model.members.length) return '<p class="panel-note">The cut list fills in once you draw members.</p>';
-    var maxLen = 0;
-    data.rows.forEach(function (r) { maxLen = Math.max(maxLen, dLen(r.rough), dLen(r.finish), dLen(r.L)); });
-    var steps = { 'in': [0.5, 1, 2], 'mm': [10, 50, 100], 'cm': [1, 5, 10], 'm': [0.01, 0.05, 0.1] }[u.len];
-    var minorStep = steps[0], majorStep = steps[1], labelStep = steps[2];
-    var span = Math.ceil(maxLen / majorStep) * majorStep || majorStep;
-
-    var h = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="6" fill="#7D8A83"/></pattern></defs></svg>';
-    h += '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() +
-      '. Lengths in ' + u.len + '. ' + stocksUsed(data) + '.</p></div>';
-    if (!solved) h += '<p class="panel-note">The truss isn\'t solved yet, so members without a chosen stock are listed as ' + esc(st.stocks[st.defaultStock.t].name) + '. ' + esc(result.message || '') + '</p>';
-    else if (simple()) h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offset for each stock, from the lab design sheet. This list uses ' + esc(st.stocks[st.defaultStock.t].name) + ' for tension members and ' + esc(st.stocks[st.defaultStock.c].name) + ' for compression members. If you choose other cross sections in the lab spreadsheet, use the cut lengths from the spreadsheet.</p>';
-    else h += '<p class="panel-note">Rough cut and finish length are the center-to-center length plus the offset for each stock, from the lab design sheet. Members use ' + esc(st.stocks[st.defaultStock.t].name) + ' in tension and ' + esc(st.stocks[st.defaultStock.c].name) + ' in compression unless you pick a stock for them.</p>';
-    h += '<div class="cut-legend"><span><i class="sw finish"></i>Finish length</span><span><i class="sw rough"></i>Extra for the rough cut</span><span><i class="sw cc"></i>Center-to-center length</span></div>';
-
-    var scale = '<div class="rule-scale">';
-    for (var t = 0; t <= span + 1e-9; t += labelStep) scale += '<span style="left:' + (t / span * 100) + '%">' + round6(t) + '</span>';
-    scale += '</div>';
-
-    h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th><th class="left">Stock</th><th class="left">Tabs</th><th>Length c-c</th><th>Rough cut</th><th>Finish</th><th>Weight (g)</th><th class="left rule-cell">' + scale + '</th><th class="print-only">Done</th></tr></thead><tbody>';
-    var totals = {};
+    var h = '<div class="print-head"><h1>' + esc(model.name) + ': cut list</h1><p>' + new Date().toLocaleDateString() + '. Lengths in ' + u.len + '.</p></div>';
+    if (!solved) h += '<p class="cut-note warn-text">' + esc(data.stab.text) + ' Until the truss is solved, every member is listed as tension.</p>';
+    h += '<p class="cut-note"><b>Before cutting:</b> export to the lab spreadsheet and pick each member\'s cross section there. This list assumes ' +
+      esc(st.stocks[st.defaultStock.t].name) + ' for tension members and ' + esc(st.stocks[st.defaultStock.c].name) + ' for compression members; if you choose other cross sections, use the lengths from the spreadsheet.</p>';
+    h += '<p class="cut-note"><b>Which length to use:</b> tension members (T) are made to the center-to-center length; compression members (C) are cut to the finish length. The length to use is in bold.</p>';
+    h += trussFigure(data);
+    h += '<table class="data cut-table"><thead><tr><th>#</th><th class="left">Joints</th><th>T / C</th>' + (simple() ? '' : '<th class="left">Stock</th>') +
+      '<th>Length c-c (' + u.len + ')</th><th>Rough cut (' + u.len + ')</th><th>Finish (' + u.len + ')</th><th class="print-only">Done</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
-      var key = r.stockId;
-      totals[key] = totals[key] || { n: 0, rough: 0, name: r.stock };
-      totals[key].n++; totals[key].rough += r.rough;
+      var comp = r.tc === 'c';
+      var cc = fLen(r.L), fin = fLen(r.finish);
       h += '<tr' + rowAttrs(r.m) + '><td>' + (r.i + 1) + '</td><td class="left">' + labelOf(r.m.a) + ' to ' + labelOf(r.m.b) + '</td><td>' + tcTag(r) + '</td>' +
-        '<td class="left' + (r.mismatch ? ' warn-text' : '') + '">' + esc(r.stock) + '</td><td class="left">' + (r.tab || '–') + '</td><td class="num">' + fLen(r.L) + '</td><td class="num">' + fLen(r.rough) + '</td><td class="num"><b>' + fLen(r.finish) + '</b></td>' +
-        '<td class="num">' + num(r.weight, 1) + '</td><td class="rule-cell">' + ruleSvg(r, span, minorStep, majorStep) + '</td><td class="print-only"><span class="tickbox"></span></td></tr>';
+        (simple() ? '' : '<td class="left' + (r.mismatch ? ' warn-text' : '') + '">' + esc(r.stock) + '</td>') +
+        '<td class="num">' + (comp ? cc : '<b>' + cc + '</b>') + '</td><td class="num">' + fLen(r.rough) + '</td>' +
+        '<td class="num">' + (comp ? '<b>' + fin + '</b>' : fin) + '</td><td class="print-only"><span class="tickbox"></span></td></tr>';
     });
-    h += '</tbody></table><div class="stock-totals">';
-    STOCK_IDS.forEach(function (k) {
-      if (!totals[k]) return;
-      h += '<div>' + esc(totals[k].name) + ': <b>' + totals[k].n + '</b> pieces, <b>' + fLen(totals[k].rough) + ' ' + u.len + '</b> of stock before saw kerf</div>';
-    });
-    return h + '</div>';
+    return h + '</tbody></table>';
   }
 
   function renderJoints() {
@@ -913,7 +930,7 @@
     if (!model.members.length) return '<p class="panel-note">Members show up here once you draw them.</p>';
     var h = '<div class="print-head"><h1>' + esc(model.name) + ': members</h1><p>' + new Date().toLocaleDateString() + '. Lengths in ' + u.len + ', forces in ' + u.force + '; positive force is tension.</p></div>';
     h += solved ? '<p class="panel-note">These columns match the lab design spreadsheet. Use <b>Export to lab spreadsheet</b> to fill it in, then pick each member\'s cross section there to see how it changes the weight and safety factor.</p>'
-      : '<p class="panel-note">' + esc(result.message || 'Not solved yet.') + '</p>';
+      : '<p class="panel-note">Forces appear once the truss is stable. The box at the top left of the drawing says what to fix.</p>';
     h += '<table class="data"><thead><tr><th>#</th><th class="left">Joints</th><th>From x</th><th>From y</th><th>To x</th><th>To y</th><th>Length c-c (' + u.len + ')</th><th class="left">T or C</th><th>Force (' + u.force + ')</th></tr></thead><tbody>';
     data.rows.forEach(function (r) {
       var a = jointById(r.m.a), b = jointById(r.m.b);
@@ -1265,8 +1282,15 @@
     afterLoad(true);
     toast('Loaded the lab truss example: ' + fForce(1000) + ' ' + U().force + ' down at joint E.');
   }
+  function loadTestSetup() {
+    checkpoint();
+    model = testSetupModel();
+    afterLoad(true);
+    toast('Loaded the test setup: supports at ' + pt(0, 0) + ' and ' + pt(0, 12) + ', ' + fForce(1000) + ' ' + U().force + ' down at ' + pt(30, 18) + '.');
+  }
+  $('#btnTestSetup').addEventListener('click', loadTestSetup);
   $('#btnExample').addEventListener('click', loadExample);
-  $('#btnExample2').addEventListener('click', loadExample);
+  $('#btnExample2').addEventListener('click', loadTestSetup);
 
   // ---------- files ----------
   function download(name, text, type) {
@@ -1482,7 +1506,7 @@
     var u = U(), st = model.settings, theme = currentTheme();
     var snapOpts = SNAPS[u.len].map(function (d) { return [d / LEN_F[u.len], d + ' ' + u.len]; });
     var curSnap = snapOpts.filter(function (o) { return Math.abs(o[0] - st.snap) < 1e-9; })[0];
-    var h = '<fieldset><legend>Units</legend><p class="hint">Each quantity has its own unit, so mixed units work, like the lab\'s A = 0.25 in² with E = 69 GPa. Values are converted, never re-entered.</p><div class="settings-grid">' +
+    var h = '<fieldset><legend>Units</legend><p class="hint">Each quantity has its own unit, so mixed units work, like the lab\'s A = 0.25 in² with E = 69 GPa (aluminum 6061). Values are converted, never re-entered.</p><div class="settings-grid">' +
       sSelect('unit-len', 'Length', Object.keys(LEN_F), u.len) +
       sSelect('unit-force', 'Force', Object.keys(FORCE_F), u.force) +
       (simple() ? '' : sSelect('unit-E', 'Elastic modulus', Object.keys(E_F), u.E) + sSelect('unit-A', 'Area', Object.keys(A_F), u.A)) +
@@ -1564,6 +1588,7 @@
   // ---------- start ----------
   applyTheme();
   restore();
+  if (!model.joints.length) model = testSetupModel();
   analyze.cache = analyze();
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function () { renderCanvas(); }).observe(svg);
   fitView();
