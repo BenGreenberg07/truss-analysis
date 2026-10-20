@@ -928,11 +928,8 @@
 
   function renderResults(data) {
     if (simple()) {
+      // the cut list is only rendered while printing; the screen keeps the members table
       var cut = ui.simpleView === 'cut';
-      document.body.classList.toggle('simple-cut', cut);
-      $('.simple-title').textContent = cut ? 'Cut list' : 'Members';
-      $('#btnCutList').textContent = cut ? 'Back to members' : 'Cut list';
-      $('#btnCutList').setAttribute('aria-pressed', String(cut));
       $('#panel').innerHTML = cut ? renderCut(data) : renderSimple(data);
       return;
     }
@@ -1339,15 +1336,15 @@
     download(slug() + '-members.csv', lines.join('\n') + '\n', 'text/csv');
     toast('Downloaded ' + slug() + '-members.csv');
   });
-  $('#btnCutList').addEventListener('click', function () {
-    ui.simpleView = ui.simpleView === 'cut' ? 'members' : 'cut';
-    refresh();
-  });
   $('#btnPrint').addEventListener('click', function () {
     ui.tab = 'cut';
     ui.simpleView = 'cut';
     refresh();
     window.print();
+    if (simple()) {
+      ui.simpleView = 'members';
+      refresh();
+    }
   });
 
   // ---------- lab spreadsheet export ----------
