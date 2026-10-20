@@ -63,7 +63,9 @@
   var model = emptyModel();
   var result = null;
   var undoStack = [], redoStack = [];
-  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', mode: 'simple', cursor: null, focusLoad: false };
+  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', cursor: null, focusLoad: false,
+    // Detailed mode is hidden from students; add ?detailed to the address to open it
+    mode: /[?&]detailed\b/.test(location.search) ? 'full' : 'simple' };
   function simple() { return ui.mode === 'simple'; }
   var view = { x: 12, y: 6, s: 30 };
   var drag = null;
@@ -191,7 +193,6 @@
       if (data.ui) {
         if (data.ui.tab) ui.tab = data.ui.tab;
         if (data.ui.labels) ui.labels = data.ui.labels;
-        if (data.ui.mode) ui.mode = data.ui.mode;
       }
     } catch (e) { /* ignore a corrupt or blocked store */ }
   }

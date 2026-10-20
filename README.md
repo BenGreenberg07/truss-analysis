@@ -4,7 +4,9 @@ A 2D truss calculator for the engineering mechanics truss lab. Draw the truss (o
 
 Open `index.html` in a browser. No install or build step.
 
-The switch in the top bar picks how much to show. **Simple** is the course version: draw the truss, see the member forces and tension or compression, then **Export to lab spreadsheet** to get the E6 Lab 3 design sheet filled in, with the lab's formulas and dropdowns for each member's cross section and tabs. **Detailed** adds stock selection, safety factors, end tabs, weight, the predicted score and the drawn-to-scale cut list.
+Draw the truss, see the member forces and tension or compression, then **Export to lab spreadsheet** to get the E6 Lab 3 design sheet filled in, with the lab's formulas and dropdowns for each member's cross section and tabs.
+
+A more detailed mode (stock selection, safety factors, end tabs, weight, predicted score, design-rule list and a drawn-to-scale cut list) is hidden from students. Open it by adding `?detailed` to the address.
 
 Units are set per quantity (length, force, elastic modulus, area), so mixed units like A = 0.25 in² with E = 69 GPa work. Values are stored internally in inches and lbf.
 
