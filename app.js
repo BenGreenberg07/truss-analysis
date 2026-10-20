@@ -46,7 +46,7 @@
   function exampleModel() {
     var m = emptyModel();
     m.name = 'Lab truss example';
-    var pts = [[0, 0], [11.8, 0.34], [23.2, 2.02], [31.3, 8.74], [30.6, 17.1], [22.8, 12.8], [14.7, 12], [6, 12], [0, 12]];
+    var pts = [[0, 0], [11.8, 0.34], [23.2, 2.02], [31.3, 8.74], [30, 18], [22.8, 12.8], [14.7, 12], [6, 12], [0, 12]];
     pts.forEach(function (p) { m.joints.push({ id: m.nextId++, x: p[0], y: p[1] }); });
     var J = function (letter) { return letter.charCodeAt(0) - 64; };
     var mem = ['GF', 'HG', 'IH', 'AB', 'CF', 'BG', 'BC', 'CG', 'FD', 'DC', 'FE', 'DE', 'AH', 'BH'];
