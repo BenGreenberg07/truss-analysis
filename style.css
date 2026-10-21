@@ -24,46 +24,6 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #111614;
-    --sheet: #181E1B;
-    --ink: #E4EBE7;
-    --ink-2: #A3B1A9;
-    --ink-3: #6F7D76;
-    --rule: #2D3833;
-    --grid: #1C2421;
-    --grid-major: #28332E;
-    --tension: #6EA0FF;
-    --tension-tint: #1C2B47;
-    --compression: #FF6FA6;
-    --compression-tint: #43202F;
-    --zero: #6F7D76;
-    --reaction: #5CC08A;
-    --danger: #FF7B6E;
-    --shadow: none;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --paper: #111614;
-  --sheet: #181E1B;
-  --ink: #E4EBE7;
-  --ink-2: #A3B1A9;
-  --ink-3: #6F7D76;
-  --rule: #2D3833;
-  --grid: #1C2421;
-  --grid-major: #28332E;
-  --tension: #6EA0FF;
-  --tension-tint: #1C2B47;
-  --compression: #FF6FA6;
-  --compression-tint: #43202F;
-  --zero: #6F7D76;
-  --reaction: #5CC08A;
-  --danger: #FF7B6E;
-  color-scheme: dark;
-}
-
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {

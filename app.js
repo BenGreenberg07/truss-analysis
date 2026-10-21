@@ -3,7 +3,6 @@
   'use strict';
 
   var STORE_KEY = 'truss-lab-v1';
-  var THEME_KEY = 'truss-lab-theme';
 
   // Everything is stored in inches, lbf, psi and in²; these factors convert for display and input.
   var LEN_F = { 'in': 1, 'mm': 25.4, 'cm': 2.54, 'm': 0.0254 };
@@ -1522,16 +1521,13 @@
       return '<option value="' + esc(val) + '"' + (String(val) === String(current) ? ' selected' : '') + '>' + esc(text) + '</option>';
     }).join('') + '</select></label>';
   }
-  function currentTheme() {
-    try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (e) { return 'system'; }
-  }
   function nearestSnap(len, snapIn) {
     var best = null;
     SNAPS[len].forEach(function (d) { var v = d / LEN_F[len]; if (best === null || Math.abs(v - snapIn) < Math.abs(best - snapIn)) best = v; });
     return best;
   }
   function renderSettings() {
-    var u = U(), st = model.settings, theme = currentTheme();
+    var u = U(), st = model.settings;
     var snapOpts = SNAPS[u.len].map(function (d) { return [d / LEN_F[u.len], d + ' ' + u.len]; });
     var curSnap = snapOpts.filter(function (o) { return Math.abs(o[0] - st.snap) < 1e-9; })[0];
     var h = '<fieldset><legend>Units</legend><p class="hint">Each quantity has its own unit, so mixed units work, like the lab\'s A = 0.25 in² with E = 69 GPa (aluminum 6061). Values are converted, never re-entered.</p><div class="settings-grid">' +
@@ -1561,8 +1557,6 @@
         '</div><p class="hint">Pin hardware = (joints - 2) x per joint. The two support joints use the test fixture\'s pins.</p></fieldset>';
     }
     h += '<fieldset><legend>Checks</legend><label class="check"><input type="checkbox" data-special="rules"' + (st.rules ? ' checked' : '') + '> Check the E6 lab design rules (member lengths, angles, load point, supports)</label></fieldset>';
-    h += '<fieldset><legend>Appearance</legend><div class="settings-grid">' +
-      sSelect('theme', 'Theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], theme) + '</div></fieldset>';
     $('#settingsBody').innerHTML = h;
   }
   $('#btnSettings').addEventListener('click', function () { renderSettings(); dialog.showModal(); });
@@ -1591,9 +1585,6 @@
     } else if (sp === 'snap') {
       model.settings.snap = Number(el.value);
       refresh();
-    } else if (sp === 'theme') {
-      try { localStorage.setItem(THEME_KEY, el.value); } catch (err) { /* ignore */ }
-      applyTheme();
     }
   });
   $('#btnResetSettings').addEventListener('click', function () {
@@ -1607,14 +1598,7 @@
     toast('Lab settings reset to the defaults.');
   });
 
-  function applyTheme() {
-    var t = currentTheme();
-    if (t === 'system') document.documentElement.removeAttribute('data-theme');
-    else document.documentElement.setAttribute('data-theme', t);
-  }
-
   // ---------- start ----------
-  applyTheme();
   restore();
   if (!model.joints.length) model = testSetupModel();
   analyze.cache = analyze();
