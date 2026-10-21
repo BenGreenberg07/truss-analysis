@@ -83,3 +83,25 @@ test('lab truss example solves and is determinate', () => {
   near(r.forces[2], 2550.0, 1);    // member 3 (I to H), tension
   near(r.forces[3], -2080.8, 1);   // member 4 (A to B), compression
 });
+
+test('bad E or A is an error, not NaN forces', () => {
+  for (const s of [{ E: 0, A: 0.25 }, { E: 1e7, A: 0 }, { E: NaN, A: 0.25 }, { E: 1e7, A: -1 }]) {
+    const m = triangle();
+    m.settings = s;
+    assert.strictEqual(solveTruss(m).status, 'error');
+  }
+});
+
+test('a member pointing at a missing joint is an error, not a crash', () => {
+  const m = triangle();
+  m.members.push({ id: 9, a: 1, b: 99 });
+  assert.strictEqual(solveTruss(m).status, 'error');
+});
+
+test('names the joint that can move when the truss is a mechanism', () => {
+  const m = triangle();
+  m.members.pop();
+  const r = solveTruss(m);
+  assert.strictEqual(r.status, 'unstable');
+  assert.ok([1, 2, 3].includes(r.mechanismJoint));
+});

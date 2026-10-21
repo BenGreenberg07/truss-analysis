@@ -16,6 +16,7 @@
   // rough/finish: offset added to the center-to-center length.
   // weight = perIn * finish + ends. Capacity: cap (centered tabs); offset tabs = offA - offB * finish.
   var STOCK_IDS = ['flat14', 'flat18', 'tube1', 'tube34'];
+  var RESTRAINT_TYPES = ['pin', 'roller-y', 'roller-x'];
   function defaultStocks() {
     return {
       flat14: { name: '1/4 x 1 flat bar', kind: 't', rough: 1.30, finish: 1.25, perIn: 11.5, ends: 0, cap: 3000 },
@@ -119,16 +120,28 @@
     while (i > 0) { i -= 1; s = String.fromCharCode(65 + (i % 26)) + s; i = Math.floor(i / 26); }
     return s;
   }
-  function jointIndex(id) {
-    for (var i = 0; i < model.joints.length; i++) if (model.joints[i].id === id) return i;
-    return -1;
+  // id -> position lookups, rebuilt only when the list is replaced or changes length
+  function indexer() {
+    var cache = { arr: null, len: -1, map: null };
+    function build(arr) {
+      var map = {};
+      for (var i = 0; i < arr.length; i++) map[arr[i].id] = i;
+      cache = { arr: arr, len: arr.length, map: map };
+    }
+    return function (arr, id) {
+      if (cache.arr !== arr || cache.len !== arr.length) build(arr);
+      var k = cache.map[id];
+      if (k !== undefined && arr[k] && arr[k].id === id) return k;
+      build(arr); // the list changed in place; look again
+      k = cache.map[id];
+      return k === undefined ? -1 : k;
+    };
   }
+  var jointIdx = indexer(), memberIdx = indexer();
+  function jointIndex(id) { return jointIdx(model.joints, id); }
   function jointById(id) { return model.joints[jointIndex(id)]; }
   function labelOf(id) { return jointLabel(jointIndex(id)); }
-  function memberIndex(id) {
-    for (var i = 0; i < model.members.length; i++) if (model.members[i].id === id) return i;
-    return -1;
-  }
+  function memberIndex(id) { return memberIdx(model.members, id); }
   function toast(msg) {
     var t = $('#toast');
     t.textContent = msg;
@@ -185,14 +198,68 @@
     }
     ['stock', 'offsets', 'capacity', 'weight'].forEach(function (k) { delete out.settings[k]; });
     out.settings.units = typeof ms.units === 'object' && ms.units ? Object.assign(defaultUnits(), ms.units) : defaultUnits();
-    out.members.forEach(function (mb) { if (mb.stock && !out.settings.stocks[mb.stock]) delete mb.stock; });
-    out.supports = out.supports || {};
-    out.loads = out.loads || {};
-    out.bracket = out.bracket || {};
+    // everything below guards against damaged or hand-edited files
+    var fin = function (v, d) { v = Number(v); return isFinite(v) ? v : d; };
+    var pos = function (v, d) { v = Number(v); return isFinite(v) && v > 0 ? v : d; };
+    var st = out.settings, dset = defaultSettings();
+    if (!LEN_F[st.units.len]) st.units.len = 'in';
+    if (!FORCE_F[st.units.force]) st.units.force = 'lbf';
+    if (!E_F[st.units.E]) st.units.E = 'GPa';
+    if (!A_F[st.units.A]) st.units.A = 'in²';
+    st.E = pos(st.E, dset.E); st.A = pos(st.A, dset.A); st.snap = pos(st.snap, dset.snap);
+    st.rules = st.rules !== false;
+    st.pin.perJoint = fin(st.pin.perJoint, 57.5); st.pin.skip = fin(st.pin.skip, 2);
+    STOCK_IDS.forEach(function (id) {
+      var sk = st.stocks[id], d = ds[id];
+      ['rough', 'finish', 'perIn', 'ends', 'cap', 'offA', 'offB'].forEach(function (k) { if (d[k] !== undefined) sk[k] = fin(sk[k], d[k]); });
+      sk.name = String(sk.name || d.name); sk.kind = d.kind;
+    });
+    if (!st.stocks[st.defaultStock.t] || st.stocks[st.defaultStock.t].kind !== 't') st.defaultStock.t = 'flat14';
+    if (!st.stocks[st.defaultStock.c] || st.stocks[st.defaultStock.c].kind !== 'c') st.defaultStock.c = 'tube1';
+    out.name = String(out.name || 'Untitled truss').slice(0, 120);
+
+    var seenJ = {}, nextFree = 1;
+    out.joints = (Array.isArray(out.joints) ? out.joints : []).filter(function (j) {
+      return j && isFinite(Number(j.x)) && isFinite(Number(j.y));
+    }).map(function (j) {
+      var id = Number(j.id);
+      if (!isFinite(id) || seenJ[id]) { while (seenJ[nextFree]) nextFree++; id = nextFree; }
+      seenJ[id] = true;
+      return { id: id, x: Number(j.x), y: Number(j.y) };
+    });
+    var pairs = {}, seenM = {};
+    out.members = (Array.isArray(out.members) ? out.members : []).filter(function (mb) {
+      if (!mb) return false;
+      mb.a = Number(mb.a); mb.b = Number(mb.b);
+      if (!seenJ[mb.a] || !seenJ[mb.b] || mb.a === mb.b) return false;
+      var key = Math.min(mb.a, mb.b) + '-' + Math.max(mb.a, mb.b);
+      if (pairs[key]) return false;
+      pairs[key] = true;
+      return true;
+    });
     var maxId = 0;
     out.joints.forEach(function (j) { maxId = Math.max(maxId, j.id); });
-    out.members.forEach(function (mb) { maxId = Math.max(maxId, mb.id); });
-    out.nextId = Math.max(out.nextId || 1, maxId + 1);
+    out.members.forEach(function (mb) { var id = Number(mb.id); if (isFinite(id)) maxId = Math.max(maxId, id); });
+    out.members.forEach(function (mb) {
+      var id = Number(mb.id);
+      if (!isFinite(id) || seenJ[id] || seenM[id]) id = ++maxId;
+      mb.id = id; seenM[id] = true;
+      if (mb.stock && !st.stocks[mb.stock]) delete mb.stock;
+      if (mb.tab !== 'off') delete mb.tab;
+      if (mb.cap != null && !(Number(mb.cap) > 0)) delete mb.cap; else if (mb.cap != null) mb.cap = Number(mb.cap);
+    });
+    var clean = function (obj, keep) {
+      var res = {};
+      Object.keys(obj && typeof obj === 'object' ? obj : {}).forEach(function (k) { if (seenJ[Number(k)]) { var v = keep(obj[k]); if (v !== undefined) res[Number(k)] = v; } });
+      return res;
+    };
+    out.supports = clean(out.supports, function (v) { return RESTRAINT_TYPES.indexOf(v) >= 0 ? v : undefined; });
+    out.loads = clean(out.loads, function (v) {
+      var fx = fin(v && v.fx, 0), fy = fin(v && v.fy, 0);
+      return fx || fy ? { fx: fx, fy: fy } : undefined;
+    });
+    out.bracket = clean(out.bracket, function (v) { return v ? true : undefined; });
+    out.nextId = Math.max(fin(out.nextId, 1), maxId + 1);
     return out;
   }
   function restore() {
@@ -200,7 +267,7 @@
       var raw = localStorage.getItem(STORE_KEY);
       if (!raw) return;
       var data = JSON.parse(raw);
-      if (data.model && Array.isArray(data.model.joints)) model = normalize(data.model);
+      if (data.model && typeof data.model === 'object') model = normalize(data.model);
       if (data.ui) {
         if (data.ui.tab) ui.tab = data.ui.tab;
         if (data.ui.labels) ui.labels = data.ui.labels;
@@ -330,12 +397,22 @@
 
   // One plain-language status used everywhere (canvas, side panel, tables), so the messages agree.
   function stability(s) {
-    var j = model.joints.length, m = model.members.length, r = result.counts.r;
+    var j = model.joints.length, m = model.members.length, r = 0;
+    // count reactions from the model itself: the solver stops before counting when it hits an error
+    model.joints.forEach(function (jt) { var t = model.supports[jt.id]; r += t === 'pin' ? 2 : t ? 1 : 0; });
     var loose = model.joints.filter(function (jt) { return !model.members.some(function (mb) { return mb.a === jt.id || mb.b === jt.id; }); });
     var names = function (list) { return list.map(function (jt) { return labelOf(jt.id); }).join(', '); };
     s.flagJoints = [];
     if (!j) return { level: 'idle', text: '' };
     if (!m) return { level: 'idle', text: 'Connect the joints with members: pick the Member tool (M), then click one joint and the next.' };
+    if (result.status === 'error') {
+      var zero = model.members.filter(function (mb) { var a = jointById(mb.a), b = jointById(mb.b); return a && b && Math.hypot(b.x - a.x, b.y - a.y) < 1e-9; });
+      if (zero.length) {
+        s.flagJoints = [zero[0].a];
+        return { level: 'warn', text: 'Member ' + (model.members.indexOf(zero[0]) + 1) + ' has zero length: joints ' + labelOf(zero[0].a) + ' and ' + labelOf(zero[0].b) + ' are in the same spot. Move one of them, or undo.' };
+      }
+      return { level: 'warn', text: result.message };
+    }
     if (r < 3) return { level: 'warn', text: 'Add supports: the lab truss is pinned at (0, 0) and (0, 12).' };
     if (loose.length) {
       s.flagJoints = loose.map(function (jt) { return jt.id; });
@@ -816,7 +893,8 @@
     }
   }
   function checks(data) {
-    var j = model.joints.length, m = model.members.length, r = result.counts.r, items = [];
+    var j = model.joints.length, m = model.members.length, items = [], r = 0;
+    model.joints.forEach(function (jt) { var t = model.supports[jt.id]; r += t === 'pin' ? 2 : t ? 1 : 0; });
     function add(ok, text) { items.push('<li' + (ok ? '' : ' class="bad"') + '>' + text + '</li>'); }
     add(true, j + ' joints, ' + m + ' members');
     add(r >= 3, r >= 3 ? 'Supports are in place' : 'Needs supports at (0, 0) and (0, 12)');
@@ -1563,10 +1641,12 @@
   $('#settingsBody').addEventListener('change', function (e) {
     var el = e.target, sp = el.dataset.special;
     if (el.dataset.setting) {
-      var v = readNum(el);
+      var v = readNum(el), path = el.dataset.setting;
       if (v === null) { renderSettings(); return; }
+      var mustBePositive = path === 'E' || path === 'A' || /\.(cap|perIn)$/.test(path);
+      if (mustBePositive && !(v > 0)) { toast('That value has to be greater than zero.'); renderSettings(); return; }
       checkpoint();
-      setPath(model.settings, el.dataset.setting, KINDS[el.dataset.kind || 'plain'][1](v));
+      setPath(model.settings, path, KINDS[el.dataset.kind || 'plain'][1](v));
       refresh();
     } else if (sp && sp.indexOf('unit-') === 0) {
       var key = sp.slice(5);
@@ -1601,6 +1681,10 @@
   // ---------- start ----------
   restore();
   if (!model.joints.length) model = testSetupModel();
+  try { analyze.cache = analyze(); } catch (err) {
+    // saved work that can't be analyzed should never lock the app; start fresh instead
+    model = testSetupModel();
+  }
   analyze.cache = analyze();
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function () { renderCanvas(); }).observe(svg);
   fitView();

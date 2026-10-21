@@ -23,6 +23,18 @@
       res.message = 'Add joints and members to start.';
       return res;
     }
+    if (!(E > 0 && isFinite(E)) || !(A > 0 && isFinite(A))) {
+      res.status = 'error';
+      res.message = 'The elastic modulus E and area A must be positive numbers. Check Lab settings.';
+      return res;
+    }
+    for (var jc = 0; jc < joints.length; jc++) {
+      if (!isFinite(joints[jc].x) || !isFinite(joints[jc].y)) {
+        res.status = 'error';
+        res.message = 'Joint ' + (jc + 1) + ' has an invalid position.';
+        return res;
+      }
+    }
 
     var index = {};
     joints.forEach(function (j, i) { index[j.id] = i; });
@@ -34,6 +46,11 @@
     for (var e = 0; e < members.length; e++) {
       var mb = members[e];
       var a = joints[index[mb.a]], b = joints[index[mb.b]];
+      if (!a || !b) {
+        res.status = 'error';
+        res.message = 'Member ' + (e + 1) + ' is connected to a joint that does not exist.';
+        return res;
+      }
       var dx = b.x - a.x, dy = b.y - a.y;
       var L = Math.sqrt(dx * dx + dy * dy);
       if (L < 1e-9) {
