@@ -202,6 +202,12 @@ button, input, select { font: inherit; color: inherit; }
 .react-arrow { stroke: var(--reaction); stroke-width: 2; fill: none; }
 .react-head { fill: var(--reaction); }
 .react-text { font: 500 11px var(--f-mono); fill: var(--reaction); paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
+.member-deflected { stroke: var(--ink-2); stroke-width: 1.8; stroke-dasharray: 6 4; fill: none; }
+.joint-deflected { fill: var(--ink-2); }
+.legend-toggle { border: 1px solid var(--rule); border-radius: 3px; background: transparent; padding: 3px 9px; cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.legend-toggle[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.deflect-note { font-size: 12px; color: var(--ink-2); }
+.deflect-note:empty { display: none; }
 .rubber { stroke: var(--tension); stroke-width: 2; stroke-dasharray: 6 4; }
 .snap-mark { stroke: var(--ink-2); stroke-width: 1; }
 

@@ -74,7 +74,7 @@
   var model = emptyModel();
   var result = null;
   var undoStack = [], redoStack = [];
-  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', simpleView: 'members', cursor: null, focusLoad: false,
+  var ui = { tool: 'select', sel: null, hover: null, pending: null, labels: 'force', tab: 'forces', simpleView: 'members', showDeflection: false, cursor: null, focusLoad: false,
     // Detailed mode is hidden from students; add ?detailed to the address to open it
     mode: /[?&]detailed\b/.test(location.search) ? 'full' : 'simple' };
   function simple() { return ui.mode === 'simple'; }
@@ -616,6 +616,32 @@
       }
     });
 
+    // deflected shape, exaggerated so it can be seen; the label says by how much
+    var note = '';
+    if (ui.showDeflection && solved) {
+      var maxU = 0, xs = [], ys = [];
+      model.joints.forEach(function (j) {
+        var u = result.u[j.id];
+        maxU = Math.max(maxU, Math.hypot(u.x, u.y));
+        xs.push(j.x); ys.push(j.y);
+      });
+      var span = Math.max(Math.max.apply(null, xs) - Math.min.apply(null, xs), Math.max.apply(null, ys) - Math.min.apply(null, ys));
+      if (maxU > 1e-12) {
+        var raw = 0.1 * span / maxU, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+        var k = [1, 2, 5, 10].map(function (f) { return f * mag; }).filter(function (v) { return v <= raw; }).pop() || mag;
+        var moved = function (j) { var u = result.u[j.id]; return toS(j.x + k * u.x, j.y + k * u.y); };
+        model.members.forEach(function (m) {
+          var a = moved(jointById(m.a)), b = moved(jointById(m.b));
+          out.push('<line class="member-deflected" x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '"/>');
+        });
+        model.joints.forEach(function (j) { var p = moved(j); out.push('<circle class="joint-deflected" cx="' + p[0] + '" cy="' + p[1] + '" r="3"/>'); });
+        note = 'Dashed: bent shape, exaggerated ' + num(k, 0) + ' times.';
+        if (data.defl) note += ' Load point moves ' + fDisp(Math.abs(data.defl.value)) + ' ' + U().len + (data.defl.value < 0 ? (data.defl.dir === 'vertical' ? ' down' : ' left') : (data.defl.dir === 'vertical' ? ' up' : ' right')) + '.';
+      }
+    } else if (ui.showDeflection) {
+      note = 'The bent shape appears once the truss is stable and loaded.';
+    }
+    $('#deflectNote').textContent = note;
     out.push(pills.join(''));
 
     // joints
@@ -675,6 +701,7 @@
     document.querySelectorAll('[data-labels]').forEach(function (b) {
       b.setAttribute('aria-checked', String(b.dataset.labels === ui.labels));
     });
+    $('#btnDeflect').setAttribute('aria-pressed', String(ui.showDeflection));
     $('#btnUndo').disabled = !undoStack.length;
     $('#btnRedo').disabled = !redoStack.length;
     $('#canvasHint').textContent = ui.tool === 'member' && ui.pending ? HINTS.memberPending
@@ -1253,6 +1280,7 @@
   document.querySelectorAll('[data-labels]').forEach(function (b) {
     b.addEventListener('click', function () { ui.labels = b.dataset.labels; refresh(); });
   });
+  $('#btnDeflect').addEventListener('click', function () { ui.showDeflection = !ui.showDeflection; refresh(); });
   document.querySelectorAll('[data-mode]').forEach(function (b) {
     b.addEventListener('click', function () { ui.mode = b.dataset.mode; refresh(); });
   });
